@@ -1,0 +1,2 @@
+# NewNPEPEBot
+Bot for nextPepe
