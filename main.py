@@ -323,3 +323,30 @@ def keep_alive():
 keep_alive()
 print("🐸 NPEPE Folk AI Bot (time-aware + engagement mode) running nonstop...")
 bot.polling(none_stop=True, timeout=90)
+import telebot
+import os
+from flask import Flask, request
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
+
+# Example route for webhook
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def getMessage():
+    bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
+    return "!", 200
+
+@app.route("/")
+def webhook():
+    bot.remove_webhook()
+    bot.set_webhook(url='https://newnpepebot.onrender.com/' + BOT_TOKEN)
+    return "Webhook set!", 200
+
+# Example bot command
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "🐸 Welcome to NPEPEFolk — The next meme legend!")
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
