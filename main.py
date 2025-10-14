@@ -78,7 +78,7 @@ threading.Thread(target=daily_quote_poster, daemon=True).start()
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     msg = (
-        f"🐸 *Welcome to NewNPEPEBot!*\n\n"
+        f"🐸 *Welcome to NPEPEVERSE!*\n\n"
         f"From the swamp to the chain — NextPepe runs the game.\n\n"
         f"💬 Chat with Pepe’s AI brain.\n"
         f"💰 [Buy Here]({BUY_LINK})\n"
@@ -121,7 +121,7 @@ def chat_reply(message):
 @app.route("/")
 def index():
     bot.remove_webhook()
-    bot.set_webhook(url=f"https://YOUR_RENDER_APP_URL/{BOT_TOKEN}")
+    bot.set_webhook(url=f"https://newnpepebot.onrender.com/{BOT_TOKEN}")
     return "Webhook set successfully!", 200
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
