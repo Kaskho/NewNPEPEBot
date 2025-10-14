@@ -1,9 +1,7 @@
 services:
   - type: web
-    name: npepe-folk-bot
+    name: npepefolk-bot
     env: python
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python main.py"
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
+    plan: free
