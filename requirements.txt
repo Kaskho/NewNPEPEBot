@@ -1,3 +1,3 @@
-pyTelegramBotAPI==4.12.0
-Flask==2.2.5
-requests==2.28.2
+​Flask
+pyTelegramBotAPI
+google-generativeai
