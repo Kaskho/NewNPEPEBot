@@ -1,3 +1,4 @@
+import os
 import telebot
 import requests
 import json
@@ -7,10 +8,11 @@ import datetime
 from flask import Flask
 from threading import Thread
 
-BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
+# Read BOT_TOKEN from environment variable (recommended)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# === GLOBAL VARIABLE FOR GIFS ===
+# === GLOBALS ===
 pepe_gifs = []
 active_chats = set()
 
@@ -24,25 +26,40 @@ default_gifs = [
     "https://media.tenor.com/1v7mM6o0X7MAAAAC/pepe-dance-frog.gif"
 ]
 
-# === FETCH TRENDING PEPE GIFS FROM TENOR ===
+# === FETCH TRENDING PEPE GIFS FROM TENOR (in background) ===
 def refresh_gifs():
     global pepe_gifs
     while True:
         try:
-            response = requests.get(
-                "https://tenor.googleapis.com/v2/search?q=pepe&key=LIVDSRZULELA&limit=10"
+            resp = requests.get(
+                "https://tenor.googleapis.com/v2/search",
+                params={"q": "pepe", "key": "LIVDSRZULELA", "limit": 10},
+                timeout=15
             )
-            data = response.json()
-            pepe_gifs = [r["media_formats"]["gif"]["url"] for r in data["results"]]
-            print(f"✅ Updated Pepe GIFs — found {len(pepe_gifs)} new ones!")
-        except:
+            data = resp.json()
+            # Some Tenor responses may vary; be defensive
+            results = data.get("results") or []
+            gifs = []
+            for r in results:
+                media = r.get("media_formats") or {}
+                gif = media.get("gif", {})
+                url = gif.get("url")
+                if url:
+                    gifs.append(url)
+            if gifs:
+                pepe_gifs = gifs
+                print(f"✅ Updated Pepe GIFs — found {len(pepe_gifs)} new ones!")
+            else:
+                pepe_gifs = default_gifs
+                print("⚠️ No gifs found in Tenor response — using defaults.")
+        except Exception as e:
             pepe_gifs = default_gifs
-            print("⚠️ Failed to refresh GIFs, using defaults.")
-        time.sleep(604800)  # refresh every 7 days
+            print(f"⚠️ Failed to refresh GIFs, using defaults. Error: {e}")
+        # Sleep 7 days (604800 seconds)
+        time.sleep(604800)
 
 # === RANDOM EMOJI GENERATOR ===
 emojis = ["🐸", "💚", "🔥", "⚡", "💥", "😂", "🚀", "✨", "👑", "🧠", "😎", "💦", "🤝"]
-
 def random_emoji_set(count=2):
     return " ".join(random.choices(emojis, k=count))
 
@@ -54,7 +71,6 @@ greetings = [
     "Ribbit! You’ve entered the NPEPE dimension!",
     "Hey degen 🧠💥 Ready to go full meme today?"
 ]
-
 random_engagement_lines = [
     "🐸 Stay hydrated and memed, soldiers of $NPEPE!",
     "💚 Pepe bless this chat — no paper hands allowed!",
@@ -62,7 +78,6 @@ random_engagement_lines = [
     "⚔️ The swamp never sleeps — keep the meme war alive!",
     "🧠 Degens unite! $NPEPE is destiny, not a choice!"
 ]
-
 welcome_messages = [
     "🐸 Welcome to the swamp, {name}! Grab your meme and join the chaos 💚",
     "Ribbit ribbit! 🐸 {name}, you just entered the NPEPE zone!",
@@ -117,135 +132,193 @@ Pepe reincarnates as NextPepe — half legend, half glitch.
 """
 }
 
-# === AI REPLY FUNCTION ===
+# === FREE AI REPLY (fallback) ===
 def get_ai_reply(text):
     try:
         url = "https://api.mdcgpt.com/api/gpt"
-        payload = {
-            "prompt": f"Answer like NPEPE Folk AI — a funny, chaotic, meme-loving assistant that talks like a crypto degen. Be witty, short, and on-brand. Question: {text}"
-        }
-        response = requests.post(url, json=payload)
-        data = response.json()
+        payload = {"prompt": f"Answer like NPEPE Folk AI — witty, short, on-brand. Question: {text}"}
+        resp = requests.post(url, json=payload, timeout=10)
+        data = resp.json()
         return data.get("response", "Even Pepe has no clue about that 😅")
-    except:
+    except Exception as e:
+        print(f"AI error: {e}")
         return "Oops... NPEPE AI is chilling in the pond 💤 Try again later!"
 
-# === FILTER ADMINS, OWNERS & BOTS ===
+# === HELPER: ignore admins & bots ===
 def should_reply(message):
-    if message.from_user.is_bot:
-        return False
     try:
-        member = bot.get_chat_member(message.chat.id, message.from_user.id)
-        if member.status in ['creator', 'administrator']:
+        if getattr(message.from_user, "is_bot", False):
             return False
-    except:
-        pass
-    return True
+        if message.chat.type in ["group", "supergroup"]:
+            member = bot.get_chat_member(message.chat.id, message.from_user.id)
+            if member.status in ['creator', 'administrator']:
+                return False
+        return True
+    except Exception as e:
+        print(f"should_reply check error: {e}")
+        # if check fails, default to not replying to avoid spam
+        return False
 
 # === MESSAGE HANDLER ===
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'sticker', 'animation', 'document'])
 def handle_message(message):
     if not should_reply(message):
         return
-    text = message.text.lower()
-    reply = rules[text] if text in rules else get_ai_reply(text)
-    reply += " " + random_emoji_set(random.randint(2, 4))
-    bot.reply_to(message, reply)
-    if pepe_gifs and random.random() < 0.5:
-        bot.send_animation(message.chat.id, random.choice(pepe_gifs))
+
+    text = (message.text or "").strip().lower()
+    # add chat to active list for scheduled messages
+    if message.chat.id not in active_chats and message.chat.type in ["group", "supergroup"]:
+        active_chats.add(message.chat.id)
+
+    if text in rules:
+        reply = rules[text]
+        if isinstance(reply, list):
+            reply = random.choice(reply)
+    else:
+        # small chance to post engagement line instead of direct AI
+        if random.random() < 0.05:
+            reply = random.choice(random_engagement_lines)
+        else:
+            reply = get_ai_reply(text or "Hello")
+    # attach emojis
+    reply = reply + " " + random_emoji_set(random.randint(2,4))
+    try:
+        bot.reply_to(message, reply)
+    except Exception as e:
+        print(f"reply error: {e}")
+    # optionally send a gif (50% chance)
+    try:
+        if pepe_gifs and random.random() < 0.5:
+            bot.send_animation(message.chat.id, random.choice(pepe_gifs))
+    except Exception as e:
+        print(f"gif send error: {e}")
 
 # === WELCOME NEW MEMBERS ===
 @bot.message_handler(content_types=['new_chat_members'])
 def on_new_member(message):
     chat_id = message.chat.id
     for user in message.new_chat_members:
-        name = user.first_name or user.username or "frog fren"
+        name = getattr(user, "first_name", None) or getattr(user, "username", None) or "frog fren"
         welcome = random.choice(welcome_messages).format(name=name)
-        welcome += " " + random_emoji_set(3)
-        bot.send_message(chat_id, welcome)
-        if pepe_gifs:
-            bot.send_animation(chat_id, random.choice(pepe_gifs))
+        welcome = welcome + " " + random_emoji_set(3)
+        try:
+            bot.send_message(chat_id, welcome)
+            if pepe_gifs and random.random() < 0.7:
+                bot.send_animation(chat_id, random.choice(pepe_gifs))
+        except Exception as e:
+            print(f"welcome send error: {e}")
+    # track chat for scheduled messages
     active_chats.add(chat_id)
 
-# === RANDOM ENGAGEMENT + TIME-BASED GREETINGS ===
+# === TIME-BASED GREETINGS & RANDOM ENGAGEMENT ===
 def daily_greetings_and_engagement():
     greeted = {"morning": False, "noon": False, "night": False}
     while True:
         try:
             now = datetime.datetime.utcnow()
             hour = now.hour
-            # Reset greeting flags daily
+            # reset at UTC midnight
             if hour == 0:
                 greeted = {"morning": False, "noon": False, "night": False}
 
-            # Morning greetings (UTC 05–10)
+            # Morning 05–10 UTC
             if 5 <= hour <= 10 and not greeted["morning"]:
-                for chat in active_chats:
-                    msg = random.choice([
-                        "☀️ GM frogs! New day, new memes — $NPEPE never sleeps 🐸",
-                        "🐸 Morning swampers! Time to rise, meme, and conquer 💚",
-                        "💥 Wake up degens! Pepe awaits your devotion this morning.",
-                        "GM GM ☕ $NPEPE fuel = memes and chaos only!"
-                    ]) + " " + random_emoji_set(3)
-                    bot.send_message(chat, msg)
-                    if pepe_gifs:
-                        bot.send_animation(chat, random.choice(pepe_gifs))
+                for chat in list(active_chats):
+                    try:
+                        msg = random.choice([
+                            "☀️ GM frogs! New day, new memes — $NPEPE never sleeps 🐸",
+                            "🐸 Morning swampers! Time to rise, meme, and conquer 💚",
+                            "💥 Wake up degens! Pepe awaits your devotion this morning.",
+                            "GM GM ☕ $NPEPE fuel = memes and chaos only!"
+                        ]) + " " + random_emoji_set(3)
+                        bot.send_message(chat, msg)
+                        if pepe_gifs and random.random() < 0.7:
+                            bot.send_animation(chat, random.choice(pepe_gifs))
+                    except Exception as ex:
+                        print(f"morning send error to {chat}: {ex}")
+                        # if chat invalid, remove
+                        try:
+                            active_chats.discard(chat)
+                        except:
+                            pass
                 greeted["morning"] = True
 
-            # Noon greetings (UTC 11–14)
+            # Noon 11–14 UTC
             if 11 <= hour <= 14 and not greeted["noon"]:
-                for chat in active_chats:
-                    msg = random.choice([
-                        "🍽️ Noon vibes only — meme while you eat, $NPEPE never rests!",
-                        "🔥 Midday frogs — meme raids incoming!",
-                        "🐸 It’s meme o’clock somewhere — lunch & pump session!",
-                        "💚 Keep those memes flowing even during lunch break!"
-                    ]) + " " + random_emoji_set(3)
-                    bot.send_message(chat, msg)
-                    if pepe_gifs:
-                        bot.send_animation(chat, random.choice(pepe_gifs))
+                for chat in list(active_chats):
+                    try:
+                        msg = random.choice([
+                            "🍽️ Noon vibes only — meme while you eat, $NPEPE never rests!",
+                            "🔥 Midday frogs — meme raids incoming!",
+                            "🐸 It’s meme o’clock somewhere — lunch & pump session!",
+                            "💚 Keep those memes flowing even during lunch break!"
+                        ]) + " " + random_emoji_set(3)
+                        bot.send_message(chat, msg)
+                        if pepe_gifs and random.random() < 0.7:
+                            bot.send_animation(chat, random.choice(pepe_gifs))
+                    except Exception as ex:
+                        print(f"noon send error to {chat}: {ex}")
+                        try:
+                            active_chats.discard(chat)
+                        except:
+                            pass
                 greeted["noon"] = True
 
-            # Night greetings (UTC 18–22)
+            # Night 18–22 UTC
             if 18 <= hour <= 22 and not greeted["night"]:
-                for chat in active_chats:
-                    msg = random.choice([
-                        "🌙 GN frogs — dream of memes and moonshots 🐸💤",
-                        "💫 Night degen session starts — may Pepe bless your bags.",
-                        "😴 Sleep tight swampers, tomorrow’s meme war awaits!",
-                        "🐸 The night is dark but the memes are strong 💚"
-                    ]) + " " + random_emoji_set(3)
-                    bot.send_message(chat, msg)
-                    if pepe_gifs:
-                        bot.send_animation(chat, random.choice(pepe_gifs))
+                for chat in list(active_chats):
+                    try:
+                        msg = random.choice([
+                            "🌙 GN frogs — dream of memes and moonshots 🐸💤",
+                            "💫 Night degen session starts — may Pepe bless your bags.",
+                            "😴 Sleep tight swampers, tomorrow’s meme war awaits!",
+                            "🐸 The night is dark but the memes are strong 💚"
+                        ]) + " " + random_emoji_set(3)
+                        bot.send_message(chat, msg)
+                        if pepe_gifs and random.random() < 0.7:
+                            bot.send_animation(chat, random.choice(pepe_gifs))
+                    except Exception as ex:
+                        print(f"night send error to {chat}: {ex}")
+                        try:
+                            active_chats.discard(chat)
+                        except:
+                            pass
                 greeted["night"] = True
 
-            # Random engagement in between
-            for chat in active_chats:
-                if random.random() < 0.05:
-                    msg = random.choice(random_engagement_lines) + " " + random_emoji_set(3)
-                    bot.send_message(chat, msg)
-                    if pepe_gifs and random.random() < 0.4:
-                        bot.send_animation(chat, random.choice(pepe_gifs))
+            # Random engagement small chance every loop
+            for chat in list(active_chats):
+                try:
+                    if random.random() < 0.05:
+                        msg = random.choice(random_engagement_lines) + " " + random_emoji_set(3)
+                        bot.send_message(chat, msg)
+                        if pepe_gifs and random.random() < 0.4:
+                            bot.send_animation(chat, random.choice(pepe_gifs))
+                except Exception as ex:
+                    print(f"engagement send error to {chat}: {ex}")
+                    try:
+                        active_chats.discard(chat)
+                    except:
+                        pass
+
             time.sleep(900)  # check every 15 minutes
         except Exception as e:
             print(f"⚠️ Engagement loop error: {e}")
             time.sleep(60)
 
-# === KEEP-ALIVE SERVER ===
+# === KEEP-ALIVE (Flask) ===
 app = Flask('')
 
 @app.route('/')
 def home():
     return "🐸 NPEPE Folk AI Bot is alive"
 
-def run():
+def run_web():
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    Thread(target=run).start()
-    Thread(target=daily_greetings_and_engagement).start()
-    Thread(target=refresh_gifs).start()
+    Thread(target=run_web, daemon=True).start()
+    Thread(target=daily_greetings_and_engagement, daemon=True).start()
+    Thread(target=refresh_gifs, daemon=True).start()
 
 keep_alive()
 print("🐸 NPEPE Folk AI Bot (time-aware + engagement mode) running nonstop...")
