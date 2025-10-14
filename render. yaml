@@ -2,6 +2,6 @@ services:
   - type: web
     name: newnpepebot
     env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 main.py
     plan: free
