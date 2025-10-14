@@ -1,219 +1,135 @@
-import os
 import telebot
+from telebot import types
+from flask import Flask, request
 import requests
-import json
 import random
-import time
 import datetime
-from flask import Flask
-from threading import Thread
+import threading
+import time
 
-# === BOT TOKEN ===
-BOT_TOKEN = os.getenv("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
+# --- CONFIG ---
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
-# === GLOBALS ===
-pepe_gifs = []
-active_chats = set()
-last_quote_sent = {}  # track daily quotes per group
+# --- IMAGE & LINKS ---
+NPEPE_IMAGE = "https://i.ibb.co.com/JwKj10Gw/1760253999798.png"
+CONTRACT_ADDRESS = "BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump"
+BUY_LINK = "https://pump.fun/coin/BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump?s=09"
+X_LINK = "https://x.com/NPEPE_Verse?t=tBiSnw3W5a_lm0AN-jdE6w&s=09"
 
-# === DEFAULT PEPE GIFS ===
-default_gifs = [
-    "https://media.tenor.com/UcCjvPq4RrYAAAAC/pepe-dance.gif",
-    "https://media.tenor.com/5cMtt1lB9CkAAAAC/pepe-spin.gif",
-    "https://media.tenor.com/E4zKcgJP6nkAAAAd/pepe-happy.gif",
-    "https://media.tenor.com/whhPVq8hUUMAAAAC/pepe-smile.gif",
-    "https://media.tenor.com/wUoPc3VyBPUAAAAC/pepe-wink.gif"
-]
+# --- OWNER & GROUP LIST ---
+OWNER_ID = [123456789]  # replace with your Telegram ID
+GROUP_IDS = [-1001234567890, -1009876543210]  # add all group IDs here
 
-# === FETCH PEPE GIFS FROM TENOR ===
-def refresh_gifs():
-    global pepe_gifs
-    while True:
-        try:
-            resp = requests.get(
-                "https://tenor.googleapis.com/v2/search",
-                params={"q": "pepe", "key": "LIVDSRZULELA", "limit": 10},
-                timeout=15
-            )
-            data = resp.json()
-            results = data.get("results") or []
-            gifs = []
-            for r in results:
-                media = r.get("media_formats") or {}
-                gif = media.get("gif", {})
-                url = gif.get("url")
-                if url:
-                    gifs.append(url)
-            pepe_gifs = gifs or default_gifs
-            print(f"✅ Updated Pepe GIFs — {len(pepe_gifs)} found")
-        except Exception as e:
-            pepe_gifs = default_gifs
-            print(f"⚠️ GIF refresh failed: {e}")
-        time.sleep(604800)  # weekly update
-
-# === RANDOM EMOJIS ===
-emojis = ["🐸", "💚", "🔥", "⚡", "💥", "😂", "🚀", "✨", "👑", "🧠", "😎"]
-def random_emoji(count=3):
-    return " ".join(random.choices(emojis, k=count))
-
-# === FREE AI REPLY ===
-def free_ai_reply(prompt):
+# --- FREE AI REPLY API ---
+def get_free_ai_response(prompt):
     try:
-        url = "https://api.mdcgpt.com/api/gpt"
-        payload = {"prompt": f"Reply like Pepe AI — chaotic, witty, degen humor. Question: {prompt}"}
-        res = requests.post(url, json=payload, timeout=10)
-        return res.json().get("response", "Even Pepe has no clue 🐸💭")
-    except Exception as e:
-        print(f"AI error: {e}")
-        return "Pepe is meditating in the pond right now 💤"
+        url = "https://api.monkedev.com/fun/chat"
+        res = requests.get(url, params={"msg": prompt})
+        return res.json().get("response", "🐸 Pepe got distracted by the moon.")
+    except:
+        return "AI Pepe is croaking... 🐸💭"
 
-# === WISDOM OF THE DAY ===
-def generate_daily_wisdom():
+# --- DAILY QUOTE (AI + fallback) ---
+def get_daily_quote():
     try:
-        resp = requests.post("https://api.mdcgpt.com/api/gpt", json={
-            "prompt": "Give a funny, short, meme-style 'Pepe wisdom of the day'. Format it with humor and frog energy."
-        }, timeout=10)
-        return resp.json().get("response", "Ribbit... Stay hydrated and hodl 💧🐸")
+        res = requests.get("https://api.quotable.io/random").json()
+        return f"“{res['content']}” — {res['author']}"
     except:
         return random.choice([
-            "Even frogs need patience — don’t FOMO every pump 🧘‍♂️🐸",
-            "The swamp rewards the brave, not the greedy 💚",
-            "1 Pepe = 1 Pepe — eternal truth 🧬",
-            "Meme now, think later 🐸🔥"
+            "“Stay green, stay based.” — Pepe 🐸",
+            "“Even frogs dream of moonshots.”",
+            "“1 Pepe = 1 Pepe.”",
+            "“Don’t chase, just vibe.”",
+            "“Hold tight, destiny ribbits.”"
         ])
 
-# === HELPER: ignore admins & bots ===
-def should_reply(message):
-    try:
-        if getattr(message.from_user, "is_bot", False):
-            return False
-        if message.chat.type in ["group", "supergroup"]:
-            member = bot.get_chat_member(message.chat.id, message.from_user.id)
-            if member.status in ['creator', 'administrator']:
-                return False
-        return True
-    except:
-        return False
+# --- TIME GREETINGS ---
+def get_time_greeting():
+    hour = datetime.datetime.utcnow().hour
+    if 5 <= hour < 12:
+        return random.choice(["☀️ Good morning, Pepe army!", "🌅 Rise and shine, frogs!", "🐸 Morning vibe from NPEPE!"])
+    elif 12 <= hour < 18:
+        return random.choice(["🌞 Good afternoon, frogs!", "🐸 Keep raiding, stay memeing!", "💸 Midday meme power!"])
+    else:
+        return random.choice(["🌙 Good night, frogs!", "😴 Dream of pumps.", "🌌 Night vibe — hodl tight!"])
 
-# === MESSAGE HANDLER ===
-@bot.message_handler(func=lambda m: True, content_types=['text'])
-def handle_message(message):
-    if not should_reply(message):
-        return
-    text = (message.text or "").lower()
-
-    # Track active chat
-    if message.chat.id not in active_chats:
-        active_chats.add(message.chat.id)
-
-    # === Contract Address (CA) ===
-    if any(k in text for k in ["contract", "ca", "token address", "smart contract", "address"]):
-        bot.reply_to(message,
-            "🧾 *Contract Address (CA)*\n"
-            "`BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump`\n\n"
-            "🔗 [Buy Here](https://pump.fun/coin/BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump?s=09)\n"
-            "🐸 Stay degen, stay $NPEPE!",
-            parse_mode="Markdown")
-        return
-
-    # === Website / X account ===
-    if "website" in text or "x account" in text or "twitter" in text:
-        bot.reply_to(message,
-            "🌐 Official Links:\n"
-            "🐸 Website: https://t.co/4UziPz99j8\n"
-            "🐦 X (Twitter): https://x.com/NPEPE_Verse?t=tBiSnw3W5a_lm0AN-jdE6w&s=09")
-        return
-
-    # === Roadmap ===
-    if "roadmap" in text:
-        bot.reply_to(message, "🐸 Roadmap:\nPhase 1 to 4 — Birth of Meme to Memetic Ascension.\nFull detail pinned in swamp 📜")
-        return
-
-    # === General reply or AI fallback ===
-    reply = free_ai_reply(text)
-    reply += " " + random_emoji(3)
-    try:
-        bot.reply_to(message, reply)
-        if random.random() < 0.4:
-            bot.send_animation(message.chat.id, random.choice(pepe_gifs))
-    except Exception as e:
-        print(f"Reply error: {e}")
-
-# === DAILY ROUTINES ===
-def scheduled_tasks():
-    global last_quote_sent
+# --- AUTO DAILY QUOTE POSTER ---
+def daily_quote_poster():
     while True:
         now = datetime.datetime.utcnow()
-        hour = now.hour
-
-        # Morning greetings 6 UTC
-        if hour == 6:
-            for chat in list(active_chats):
+        if now.hour == 6 and now.minute == 0:
+            quote = get_daily_quote()
+            greeting = get_time_greeting()
+            msg = f"{greeting}\n\n📜 *Pepe Wisdom of the Day:*\n{quote}"
+            for gid in GROUP_IDS:
                 try:
-                    msg = random.choice([
-                        "☀️ GM frogs! Rise and meme — $NPEPE never sleeps 🐸",
-                        "🐸 Morning swampers! New day, new pump 💚",
-                        "🔥 It’s meme o’clock — grab your coffee and hop in!"
-                    ]) + " " + random_emoji(3)
-                    bot.send_message(chat, msg)
-                except:
-                    pass
+                    bot.send_photo(gid, NPEPE_IMAGE, caption=msg, parse_mode="Markdown")
+                except Exception as e:
+                    print(f"❌ Failed to send quote to {gid}: {e}")
+            time.sleep(60)  # wait 1 min to avoid re-sending
+        time.sleep(30)  # check every 30 sec
 
-        # Noon greetings 12 UTC
-        if hour == 12:
-            for chat in list(active_chats):
-                try:
-                    msg = random.choice([
-                        "🍽️ Lunchtime degens — meme while you eat!",
-                        "💚 Midday swamp check: frogs still strong 🐸",
-                        "🔥 Keep the vibes pumping, it’s meme hour!"
-                    ]) + " " + random_emoji(3)
-                    bot.send_message(chat, msg)
-                except:
-                    pass
+# Start background thread for quotes
+threading.Thread(target=daily_quote_poster, daemon=True).start()
 
-        # Night greetings 20 UTC
-        if hour == 20:
-            for chat in list(active_chats):
-                try:
-                    msg = random.choice([
-                        "🌙 GN frogs — dream of memes & moonshots 💤",
-                        "🐸 Rest well, tomorrow we raid again ⚔️",
-                        "💫 The night is dark, but the memes are bright 💚"
-                    ]) + " " + random_emoji(3)
-                    bot.send_message(chat, msg)
-                except:
-                    pass
+# --- TELEGRAM COMMANDS ---
+@bot.message_handler(commands=["start", "help"])
+def send_welcome(message):
+    msg = (
+        f"🐸 *Welcome to NewNPEPEBot!*\n\n"
+        f"From the swamp to the chain — NextPepe runs the game.\n\n"
+        f"💬 Chat with Pepe’s AI brain.\n"
+        f"💰 [Buy Here]({BUY_LINK})\n"
+        f"🌐 [Official X]({X_LINK})\n"
+        f"📜 Contract: `{CONTRACT_ADDRESS}`"
+    )
+    bot.send_photo(message.chat.id, NPEPE_IMAGE, caption=msg, parse_mode="Markdown")
 
-        # Quote of the day (once per 24h per group)
-        for chat in list(active_chats):
-            last_sent = last_quote_sent.get(chat)
-            if not last_sent or (now - last_sent).days >= 1:
-                wisdom = generate_daily_wisdom()
-                try:
-                    bot.send_message(chat, f"📜 *Pepe Wisdom of the Day*\n\n_{wisdom}_", parse_mode="Markdown")
-                    last_quote_sent[chat] = now
-                except:
-                    pass
+# --- MESSAGE HANDLER ---
+@bot.message_handler(func=lambda msg: True)
+def chat_reply(message):
+    if message.from_user.id in OWNER_ID or message.from_user.is_bot:
+        return
 
-        time.sleep(3600)  # check hourly
+    text = message.text.lower()
 
-# === KEEP ALIVE ===
-app = Flask('')
+    if "contract" in text or "ca" in text:
+        bot.reply_to(message, f"🐸 Contract Address:\n`{CONTRACT_ADDRESS}`", parse_mode="Markdown")
+    elif "buy" in text:
+        bot.reply_to(message, f"💰 You can buy here:\n{BUY_LINK}")
+    elif "x" in text or "twitter" in text:
+        bot.reply_to(message, f"🌐 Official X:\n{X_LINK}")
+    elif "roadmap" in text:
+        roadmap = (
+            "🚀 *NPEPE ROADMAP*\n\n"
+            "1️⃣ Birth of the Meme — $NPEPE rises\n"
+            "2️⃣ Frog Awakening — Meme raids & Pepe army\n"
+            "3️⃣ Expansion — NPEPEVERSE grows\n"
+            "4️⃣ Memetic Ascension — Merch, lore, prophecy\n\n"
+            "🐸 'From the swamp to the chain — NextPepe runs the game.'"
+        )
+        bot.reply_to(message, roadmap, parse_mode="Markdown")
+    else:
+        ai_reply = get_free_ai_response(message.text)
+        if random.random() < 0.25:
+            ai_reply += "\n\n" + get_time_greeting()
+        bot.reply_to(message, ai_reply)
 
-@app.route('/')
-def home():
-    return "🐸 NewNPEPEBot is alive"
+# --- WEBHOOK SETUP ---
+@app.route("/")
+def index():
+    bot.remove_webhook()
+    bot.set_webhook(url=f"https://YOUR_RENDER_APP_URL/{BOT_TOKEN}")
+    return "Webhook set successfully!", 200
 
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.data.decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
 
-def keep_alive():
-    Thread(target=run_flask, daemon=True).start()
-    Thread(target=refresh_gifs, daemon=True).start()
-    Thread(target=scheduled_tasks, daemon=True).start()
-
-keep_alive()
-print("✅ NewNPEPEBot running nonstop 🐸💚")
-bot.polling(none_stop=True, timeout=90)
+# --- RUN APP ---
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
