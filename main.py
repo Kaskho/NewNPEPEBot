@@ -22,6 +22,8 @@ class Config:
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
     GROUP_CHAT_ID = os.environ.get("GROUP_CHAT_ID")
     TRIGGER_SECRET = os.environ.get("TRIGGER_SECRET", "default-secret-key-change-me")
+    # --- NEW: Add your Telegram User ID to ignore your own messages ---
+    GROUP_OWNER_ID = os.environ.get("GROUP_OWNER_ID")
 
     if not all([BOT_TOKEN, WEBHOOK_BASE_URL, GROUP_CHAT_ID]):
         logger.error("FATAL: One or more essential environment variables are missing.")
@@ -100,7 +102,7 @@ def main_menu_keyboard():
         InlineKeyboardButton("🌐 Website", url=Config.WEBSITE_URL),
         InlineKeyboardButton("✈️ Telegram", url=Config.TELEGRAM_URL),
         InlineKeyboardButton("🐦 Twitter", url=Config.TWITTER_URL),
-        InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype") # <-- THIS LINE IS NOW CORRECT
+        InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype")
     )
     return keyboard
 
@@ -137,6 +139,11 @@ def handle_callback_query(call):
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_all_text_messages(message):
+    # --- NEW: Check if the message is from the owner and ignore it ---
+    if Config.GROUP_OWNER_ID and str(message.from_user.id) == Config.GROUP_OWNER_ID:
+        logger.info(f"Ignoring message from group owner (ID: {message.from_user.id}).")
+        return # Stop processing the message
+
     text = message.text.lower()
     chat_id = message.chat.id
     try:
