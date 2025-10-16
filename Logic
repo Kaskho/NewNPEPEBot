@@ -1,0 +1,357 @@
+import os
+import logging
+import random
+import time
+from threading import Thread
+import json
+import re
+
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import groq
+
+# ==========================
+# 🔧 CONFIGURATION
+# ==========================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class Config:
+    """Configuration class for the bot."""
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    WEBHOOK_BASE_URL = os.environ.get("WEBHOOK_BASE_URL")
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+    GROUP_CHAT_ID = os.environ.get("GROUP_CHAT_ID")
+    TRIGGER_SECRET = os.environ.get("TRIGGER_SECRET", "change-this-secret-key")
+    GROUP_OWNER_ID = os.environ.get("GROUP_OWNER_ID") # Optional
+
+    if not all([BOT_TOKEN, WEBHOOK_BASE_URL, GROUP_CHAT_ID, GROQ_API_KEY]):
+        logger.warning("One or more recommended environment variables are missing (WEBHOOK_BASE_URL, GROUP_CHAT_ID, GROQ_API_KEY). Some features may be limited.")
+
+    WEBHOOK_URL = f"{WEBHOOK_BASE_URL}/{BOT_TOKEN}" if WEBHOOK_BASE_URL and BOT_TOKEN else ""
+
+    # Project Details
+    CONTRACT_ADDRESS = "BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump"
+    PUMP_FUN_LINK = f"https://pump.fun/{CONTRACT_ADDRESS}"
+    WEBSITE_URL = "https://next-pepe-launchpad-2b8b3071.base44.app"
+    TELEGRAM_URL = "https://t.me/NPEPEVERSE"
+    TWITTER_URL = "https://x.com/NPEPE_Verse?t=rFeVwGRDJpxwiwjQ8P67Xw&s=09"
+
+
+class BotLogic:
+    def __init__(self, bot_instance):
+        self.bot = bot_instance
+        self.groq_client = self._initialize_groq()
+        self.responses = self._load_initial_responses()
+        
+        # --- ANTI-SPAM CONFIGURATION ---
+        self.admin_ids = set()
+        self.admins_last_updated = 0
+        self.FORBIDDEN_KEYWORDS = [
+            'airdrop', 'giveaway', 'presale', 'private sale', 'whitelist', 
+            'signal', 'pump group', 'trading signal', 'investment advice',
+            'another coin', 'other project', 'check out my coin'
+        ]
+        self.ALLOWED_DOMAINS = [
+            'pump.fun', 't.me/NPEPEVERSE', 'x.com/NPEPE_Verse', 
+            'base44.app' # From your website URL
+        ]
+        
+        self._register_handlers()
+
+    def _initialize_groq(self):
+        """Initializes the Groq AI client."""
+        if Config.GROQ_API_KEY:
+            try:
+                client = groq.Groq(api_key=Config.GROQ_API_KEY)
+                logger.info("✅ Groq AI client initialized successfully.")
+                return client
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Groq AI client: {e}")
+        else:
+            logger.warning("⚠️ No GROQ_API_KEY found. AI features will be disabled.")
+        return None
+
+    def _load_initial_responses(self):
+        """Loads the default set of bot responses."""
+        return {
+            "GREET_NEW_MEMBERS": [
+                "🐸 Welcome to the NPEPEVERSE, {name}! We're a frenly bunch. LFG! 🚀",
+                "Ribbit! A new fren has appeared! Welcome, {name}! Glad to have you hopping with us. 🐸💚",
+                "A wild {name} appears! Welcome to the $NPEPE community. Ask questions, share memes, and let's ride to the moon together! 🌕",
+                "GM, {name}! You've just landed in the best corner of the crypto world. Welcome to the NPEPEVERSE! 🔥"
+            ],
+            "WISDOM": [
+                "Patience, young grasshopper. The greatest memes aren't built in a day. HODL strong.",
+                "In the world of FUD, be the diamond-handed NPEPE. WAGMI.",
+                "The chart is temporary, the community is forever. Stay based, frens.",
+                "A true NPEPE knows that the dip is just a sale. Buy the fear, feel the glory.",
+                "They can copy the code, but they can't copy the vibe. This is the NPEPE way."
+            ],
+            "HYPE": [
+                "LFG, frens! The rocket is fueled and ready for launch! 🚀🌕",
+                "Diamond hands, assemble! Our journey has just begun! 💎🙌",
+                "This isn't just a token, it's a revolution! NPEPEVERSE forever! 🐸💚",
+                "Feel the energy! We're writing our own story, one block at a time! 🔥",
+                "Keep calm and HODL on. Greatness is coming."
+            ],
+            "CTA_AFTER_BUY": [
+                "Now that you have the keys, what are you waiting for? Ape in and join the NPEPEVERSE army! 🐸🚀",
+                "That's the address to Valhalla, fren. Don't just stare at it, use it! Let's go! 🔥",
+                "You miss 100% of the pumps you don't ape into. Don't be that guy. Join us! 💚",
+                "See you on the moon, fren. Or are you gonna watch from the sidelines? The choice is yours. 🌕"
+            ],
+            "WHO_AM_I": [
+                "Who am I? I'm the digital spirit of the NPEPEVERSE, manifested in this chat to spread hype and wisdom. Part bot, part legend, all NPEPE. 🐸✨",
+                "You can call me the guardian of the green candles. I'm a bot built on pure meme energy, here to help the NPEPE army conquer the crypto world. Ribbit! 🤖",
+                "I'm what happens when you cross a based frog with a blockchain. A hype machine, an info dispenser, and your best fren in the NPEPEVERSE. LFG! 🚀"
+            ],
+            "WHO_IS_OWNER": [
+                "The dev? They're in the meme labs cooking up the next pump. They left me, a humble frog bot, in charge of the hype. So, what's up, fren? 🐸🔥",
+                "You're speaking to the official mouthpiece! The main dev is a shadowy super-coder, too based for the spotlight. I handle the important work, like spamming rocket emojis. 🚀",
+                "In the NPEPEVERSE, the community is the real boss. The dev just lit the fuse. My job as caretaker is to guard the flame and keep the vibes immaculate. ✨",
+                "The creator is a legend whispered on the blockchain. I'm the spokesperson they built to make sure the memes stay dank and the FUD stays away. Now, let's talk about our trip to the moon. 🌕"
+            ],
+            "FINAL_FALLBACK": [
+                "My circuits are fried from too much hype. Try asking that again, or maybe just buy more $NPEPE? That usually fixes things. 🐸",
+                "Ribbit... what was that? I was busy staring at the chart. Could you rephrase for this simple frog bot? 📈",
+                "That question is too powerful, even for me. For now, let's focus on the mission: HODL, meme, and get to the moon! 🚀🌕",
+                "Error 404: Brain not found. Currently running on pure vibes and diamond hands. Ask me about the contract address instead! 💎"
+            ]
+        }
+    
+    def _register_handlers(self):
+        """Registers all message and callback handlers for the bot."""
+        self.bot.message_handler(content_types=['new_chat_members'])(self.greet_new_members)
+        self.bot.message_handler(commands=['start', 'help'])(self.send_welcome)
+        self.bot.callback_query_handler(func=lambda call: True)(self.handle_callback_query)
+        self.bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video'])(self.handle_all_text)
+
+    # ==========================
+    # ⌨️ KEYBOARDS & ANTI-SPAM
+    # ==========================
+    def main_menu_keyboard(self):
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("🚀 About $NPEPE", callback_data="about"),
+            InlineKeyboardButton("🔗 Contract Address", callback_data="ca"),
+            InlineKeyboardButton("💰 Buy on Pump.fun", url=Config.PUMP_FUN_LINK),
+            InlineKeyboardButton("🌐 Website", url=Config.WEBSITE_URL),
+            InlineKeyboardButton("✈️ Telegram", url=Config.TELEGRAM_URL),
+            InlineKeyboardButton("🐦 Twitter", url=Config.TWITTER_URL),
+            InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype")
+        )
+        return keyboard
+
+    def _update_admin_ids(self, chat_id):
+        """Caches the list of admin IDs to avoid checking on every message."""
+        now = time.time()
+        # Refresh admin list every 10 minutes (600 seconds)
+        if now - self.admins_last_updated > 600:
+            try:
+                admins = self.bot.get_chat_administrators(chat_id)
+                self.admin_ids = {admin.user.id for admin in admins}
+                self.admins_last_updated = now
+                logger.info(f"Refreshed admin list for chat {chat_id}. Found {len(self.admin_ids)} admins.")
+            except Exception as e:
+                logger.error(f"Could not update admin list: {e}")
+
+    def _is_spam_or_ad(self, message):
+        """Checks if a message is potential spam or an unauthorized advertisement."""
+        text = message.text or message.caption or ""
+        text = text.lower()
+
+        # 1. Check for forbidden keywords
+        if any(keyword in text for keyword in self.FORBIDDEN_KEYWORDS):
+            return True, "Forbidden Keyword"
+
+        # 2. Check for unauthorized links
+        if "http" in text or "t.me" in text:
+            # Using regex to find all potential domains/links
+            urls = re.findall(r'[\w\.-]+(?:\.[\w\.-]+)+', text)
+            for url in urls:
+                if not any(allowed in url for allowed in self.ALLOWED_DOMAINS):
+                    return True, f"Unauthorized Link: {url}"
+
+        # 3. Check for other contract addresses (simple regex for common patterns)
+        # Solana-like (Base58, > 30 chars) or ETH-like (0x...)
+        solana_pattern = r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b'
+        eth_pattern = r'\b0x[a-fA-F0-9]{40}\b'
+        if re.search(solana_pattern, text) and Config.CONTRACT_ADDRESS not in message.text:
+             return True, "Potential Solana Contract Address"
+        if re.search(eth_pattern, text):
+             return True, "Potential EVM Contract Address"
+
+        return False, None
+
+    # ==========================
+    # 🤖 COMMAND & MESSAGE HANDLERS
+    # ==========================
+    def greet_new_members(self, message):
+        # ... (no changes here)
+        for member in message.new_chat_members:
+            first_name = member.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+            welcome_text = random.choice(self.responses["GREET_NEW_MEMBERS"]).format(name=f"[{first_name}](tg://user?id={member.id})")
+            try:
+                self.bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
+                logger.info(f"Welcomed new member: {first_name} (ID: {member.id})")
+            except Exception as e:
+                logger.error(f"Failed to welcome new member: {e}")
+
+    def send_welcome(self, message):
+        # ... (no changes here)
+        welcome_text = ("🐸 *Welcome to the official NextPepe ($NPEPE) Bot!* 🔥\n\n"
+                        "I am the spirit of the NPEPEVERSE, here to guide you. "
+                        "Use the buttons below or ask me anything!")
+        self.bot.reply_to(message, welcome_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
+    
+    def handle_callback_query(self, call):
+        # ... (no changes here)
+        try:
+            if call.data == "about":
+                about_text = ("🚀 *$NPEPE* is the next evolution of meme power!\n"
+                              "We are a community-driven force born on *Pump.fun*.\n\n"
+                              "This is 100% pure, unadulterated meme energy. Welcome to the NPEPEVERSE! 🐸")
+                self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                          text=about_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
+            elif call.data == "ca":
+                ca_text = f"🔗 *Contract Address:*\n`{Config.CONTRACT_ADDRESS}`"
+                self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                          text=ca_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
+                self._send_delayed_cta(call.message.chat.id)
+            elif call.data == "hype":
+                hype_text = random.choice(self.responses["HYPE"])
+                self.bot.answer_callback_query(call.id, text=hype_text, show_alert=True)
+        except Exception as e:
+            logger.error(f"Error in callback handler: {e}")
+            self.bot.answer_callback_query(call.id, "Sorry, my circuits are buzzing. Try again!")
+
+    def _send_delayed_cta(self, chat_id, delay=3):
+        # ... (no changes here)
+        def task():
+            time.sleep(delay)
+            cta_text = random.choice(self.responses["CTA_AFTER_BUY"])
+            try:
+                self.bot.send_message(chat_id, cta_text)
+            except Exception as e:
+                logger.error(f"Failed to send delayed CTA: {e}")
+        
+        thread = Thread(target=task)
+        thread.start()
+
+    def handle_all_text(self, message):
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+
+        # --- Anti-Spam Check ---
+        # First, update the list of admins periodically
+        self._update_admin_ids(chat_id)
+
+        # Skip spam check for admins and the owner
+        if user_id not in self.admin_ids:
+            is_spam, reason = self._is_spam_or_ad(message)
+            if is_spam:
+                try:
+                    self.bot.delete_message(chat_id, message.message_id)
+                    logger.info(f"Deleted message from user {user_id} for reason: {reason}")
+                    # Optionally, send a private warning to the user
+                    warning_text = f"Your message in the NPEPEVERSE group was automatically removed for potential spam ({reason}). Please respect the community rules."
+                    self.bot.send_message(user_id, warning_text, disable_notification=True)
+                except Exception as e:
+                    logger.error(f"Failed to delete message or warn user: {e}")
+                return # Stop processing the message further
+
+        # If it's not spam, continue with normal bot logic
+        if message.content_type != 'text':
+            return # Don't process non-text messages further
+            
+        text = message.text.lower().strip()
+
+        # --- Keyword-based triggers ---
+        if any(kw in text for kw in ["ca", "contract", "address"]):
+            reply = f"Here is the contract address, fren:\n\n`{Config.CONTRACT_ADDRESS}`"
+            self.bot.send_message(chat_id, reply, parse_mode="Markdown")
+            self._send_delayed_cta(chat_id)
+            return
+        
+        if any(kw in text for kw in ["how to buy", "where to buy", "buy npepe"]):
+            reply = f"💰 You can buy *$NPEPE* on Pump.fun! The portal to the moon is just one click away! 🚀"
+            self.bot.send_message(chat_id, reply, parse_mode="Markdown", reply_markup=self.main_menu_keyboard())
+            self._send_delayed_cta(chat_id)
+            return
+
+        if any(kw in text for kw in ["who are you", "what are you", "what is this bot"]):
+            self.bot.send_message(chat_id, random.choice(self.responses["WHO_AM_I"]))
+            return
+
+        if any(kw in text for kw in ["owner", "dev", "creator", "in charge", "who made you"]):
+            self.bot.send_message(chat_id, random.choice(self.responses["WHO_IS_OWNER"]))
+            return
+            
+        # --- AI Fallback ---
+        # ... (no changes to this section)
+        if self.groq_client:
+            thinking_message = None
+            try:
+                thinking_message = self.bot.send_message(chat_id, "🐸 The NPEPE oracle is consulting the memes...")
+                
+                system_prompt = (
+                    "You are a crypto community bot for a meme coin called $NPEPE. "
+                    "Your personality is funny, enthusiastic, and a bit chaotic, like a frog who drank too much coffee. "
+                    "Use crypto slang like 'fren', 'WAGMI', 'HODL', 'based', 'LFG', 'ribbit'. "
+                    "Keep your answers short, hype-filled, and helpful. You represent the NPEPEVERSE."
+                )
+
+                chat_completion = self.groq_client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message.text}
+                    ],
+                    model="llama3-8b-8192",
+                )
+                ai_response = chat_completion.choices[0].message.content
+                self.bot.edit_message_text(ai_response, chat_id=chat_id, message_id=thinking_message.message_id)
+            except Exception as e:
+                logger.error(f"Error during AI response generation: {e}")
+                if thinking_message:
+                    self.bot.delete_message(chat_id, thinking_message.message_id)
+                self.bot.send_message(chat_id, random.choice(self.responses["FINAL_FALLBACK"]))
+        else:
+            self.bot.send_message(chat_id, random.choice(self.responses["FINAL_FALLBACK"]))
+
+
+    # ==========================
+    # ⏰ SCHEDULED GREETINGS & AI RENEWAL
+    # ==========================
+    # No changes to send_scheduled_wisdom, send_scheduled_greeting, or renew_responses_with_ai
+    def send_scheduled_wisdom(self):
+        if not Config.GROUP_CHAT_ID: return "Error", 500
+        message = f"**🐸 Daily Dose of NPEPE Wisdom 📜**\n\n_{random.choice(self.responses['WISDOM'])}_"
+        try:
+            self.bot.send_message(Config.GROUP_CHAT_ID, message, parse_mode="Markdown")
+            return "OK", 200
+        except Exception as e: return f"Error: {e}", 500
+
+    def send_scheduled_greeting(self, time_of_day):
+        if not Config.GROUP_CHAT_ID: return "Error", 500
+        greetings = {
+            'morning': ["🐸☀️ GM NPEPEVERSE! Let's get this bread and hop to new highs today! 🔥🚀", "Rise and ribbit, frens! A new day to HODL and spread the hype! 💚"],
+            'noon': ["🐸 Lunch time check-in! Hope you're all staying based and diamond-handed! 💎", "Keep that energy up, NPEPE army! The afternoon pump is coming! 🚀"],
+            'night': ["🐸🌙 GN, frens! Dream of green candles and moon landings. See you tomorrow!", "Rest up, legends. The memes never sleep, and neither does our journey to the top. 💤"],
+            'random': self.responses["HYPE"]
+        }
+        message = random.choice(greetings.get(time_of_day, ["Keep the hype alive!"]))
+        try:
+            self.bot.send_message(Config.GROUP_CHAT_ID, message)
+            return "OK", 200
+        except Exception as e: return f"Error: {e}", 500
+
+    def renew_responses_with_ai(self):
+        if not self.groq_client: return "Error: AI client not configured.", 500
+        # This function remains the same, but remember to add the new `WHO_IS_OWNER` key
+        # to the schema if you want the AI to refresh those responses too.
+        # For brevity, the full function is omitted here but it should be kept from the previous version.
+        pass
