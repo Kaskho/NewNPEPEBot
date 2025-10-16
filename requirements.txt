@@ -1,4 +1,4 @@
-​pyTelegramBotAPI
+pyTelegramBotAPI
 groq
 flask
 python-dotenv
