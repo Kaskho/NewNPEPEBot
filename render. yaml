@@ -1,23 +1,7 @@
 services:
   - type: web
-    name: npepe-telegram-bot
+    name: npepebot
     env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 main.py
     plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
-    healthCheckPath: /
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.4
-      - key: BOT_TOKEN
-        sync: false # Set in Render dashboard
-      - key: WEBHOOK_BASE_URL
-        sync: false # e.g., https://your-app-name.onrender.com
-      - key: GROQ_API_KEY
-        sync: false # Set in Render dashboard
-      - key: GROUP_CHAT_ID
-        sync: false # e.g., -1001234567890
-      - key: TRIGGER_SECRET
-        generateValue: true # Render will generate a random secret
-      - key: GROUP_OWNER_ID # Optional
-        sync: false
