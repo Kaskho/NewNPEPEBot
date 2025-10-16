@@ -28,9 +28,6 @@ class Config:
     TRIGGER_SECRET = os.environ.get("TRIGGER_SECRET", "change-this-secret-key")
     GROUP_OWNER_ID = os.environ.get("GROUP_OWNER_ID") # Optional
 
-    if not all([BOT_TOKEN, WEBHOOK_BASE_URL, GROUP_CHAT_ID, GROQ_API_KEY]):
-        logger.warning("One or more recommended environment variables are missing (WEBHOOK_BASE_URL, GROUP_CHAT_ID, GROQ_API_KEY). Some features may be limited.")
-
     WEBHOOK_URL = f"{WEBHOOK_BASE_URL}/{BOT_TOKEN}" if WEBHOOK_BASE_URL and BOT_TOKEN else ""
 
     # Project Details
@@ -57,20 +54,33 @@ class BotLogic:
         ]
         self.ALLOWED_DOMAINS = [
             'pump.fun', 't.me/NPEPEVERSE', 'x.com/NPEPE_Verse', 
-            'base44.app' # From your website URL
+            'base44.app'
         ]
         
         self._register_handlers()
 
     def _initialize_groq(self):
         """Initializes the Groq AI client."""
-        # ... (no changes here)
-        pass
+        if Config.GROQ_API_KEY:
+            try:
+                client = groq.Groq(api_key=Config.GROQ_API_KEY)
+                logger.info("✅ Groq AI client initialized successfully.")
+                return client
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Groq AI client: {e}")
+        else:
+            logger.warning("⚠️ No GROQ_API_KEY found. AI features will be disabled.")
+        return None
 
     def _load_initial_responses(self):
         """Loads the default set of bot responses."""
         return {
-            # ... (previous response lists are unchanged)
+            "GREET_NEW_MEMBERS": [
+                "🐸 Welcome to the NPEPEVERSE, {name}! We're a frenly bunch. LFG! 🚀",
+                "Ribbit! A new fren has appeared! Welcome, {name}! Glad to have you hopping with us. 🐸💚",
+                "A wild {name} appears! Welcome to the $NPEPE community. Ask questions, share memes, and let's ride to the moon together! 🌕",
+                "GM, {name}! You've just landed in the best corner of the crypto world. Welcome to the NPEPEVERSE! 🔥"
+            ],
             "MORNING_GREETING": [
                 "🐸☀️ Rise and ribbit, NPEPEVERSE! A new day to conquer the charts. Let's get this bread! 🔥",
                 "GM legends! Coffee in one hand, diamond hands in the other. Let's make today legendary! 💎🙌",
@@ -144,7 +154,7 @@ class BotLogic:
                 "The owner is every person who holds $NPEPE. The dev was just the first believer. I'm here to serve all of you. 💚",
                 "Shhh, we don't speak their name. It summons too much power. Let's just focus on the memes and the green candles. 🤫"
             ],
-            "COLLABORATION_RESPONSE": [
+             "COLLABORATION_RESPONSE": [
                 "WAGMI! Love the energy! The best collab is a strong community. Be loud in here, raid on X, and let's make the NPEPEVERSE impossible to ignore! 🚀",
                 "Thanks, fren! We don't do paid promos, we ARE the promo! Your hype is the best marketing. Light up X with $NPEPE memes and be a legend in this chat! 🔥",
                 "You want to help? Based! The NPEPE army runs on passion. Be active, welcome new frens, and spread the gospel of NPEPE across the internet like a religion! 🐸🙏",
@@ -175,43 +185,101 @@ class BotLogic:
                 "Every great movement starts with a few passionate people. You're one of them. Let's get this religion started! 🙏",
                 "You got it! Let's coordinate a hype wave. Be active here and on X. When we move together, we create tsunamis! 🌊",
                 "We are the alpha. The best way to spread it is to live it. Be here, be hyped, be NPEPE. Let's show 'em how it's done. 🐸"
-            ],
-            "FINAL_FALLBACK": [
-                # ... (unchanged)
             ]
         }
     
     def _register_handlers(self):
-        # ... (no changes here)
-        pass
+        self.bot.message_handler(content_types=['new_chat_members'])(self.greet_new_members)
+        self.bot.message_handler(commands=['start', 'help'])(self.send_welcome)
+        self.bot.callback_query_handler(func=lambda call: True)(self.handle_callback_query)
+        self.bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video'])(self.handle_all_text)
 
-    # ==========================
-    # ⌨️ KEYBOARDS & ANTI-SPAM
-    # ==========================
     def main_menu_keyboard(self):
-        # ... (no changes here)
-        pass
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("🚀 About $NPEPE", callback_data="about"),
+            InlineKeyboardButton("🔗 Contract Address", callback_data="ca"),
+            InlineKeyboardButton("💰 Buy on Pump.fun", url=Config.PUMP_FUN_LINK),
+            InlineKeyboardButton("🌐 Website", url=Config.WEBSITE_URL),
+            InlineKeyboardButton("✈️ Telegram", url=Config.TELEGRAM_URL),
+            InlineKeyboardButton("🐦 Twitter", url=Config.TWITTER_URL),
+            InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype")
+        )
+        return keyboard
 
     def _update_admin_ids(self, chat_id):
-        # ... (no changes here)
-        pass
+        now = time.time()
+        if now - self.admins_last_updated > 600:
+            try:
+                admins = self.bot.get_chat_administrators(chat_id)
+                self.admin_ids = {admin.user.id for admin in admins}
+                self.admins_last_updated = now
+                logger.info(f"Refreshed admin list for chat {chat_id}. Found {len(self.admin_ids)} admins.")
+            except Exception as e:
+                logger.error(f"Could not update admin list: {e}")
 
     def _is_spam_or_ad(self, message):
-        # ... (no changes here)
-        pass
+        text = message.text or message.caption or ""
+        text = text.lower()
+        if any(keyword in text for keyword in self.FORBIDDEN_KEYWORDS):
+            return True, "Forbidden Keyword"
+        if "http" in text or "t.me" in text:
+            urls = re.findall(r'[\w\.-]+(?:\.[\w\.-]+)+', text)
+            for url in urls:
+                if not any(allowed in url for allowed in self.ALLOWED_DOMAINS):
+                    return True, f"Unauthorized Link: {url}"
+        solana_pattern = r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b'
+        eth_pattern = r'\b0x[a-fA-F0-9]{40}\b'
+        if re.search(solana_pattern, text) and Config.CONTRACT_ADDRESS not in message.text:
+             return True, "Potential Solana Contract Address"
+        if re.search(eth_pattern, text):
+             return True, "Potential EVM Contract Address"
+        return False, None
 
-    # ==========================
-    # 🤖 COMMAND & MESSAGE HANDLERS
-    # ==========================
+    def greet_new_members(self, message):
+        for member in message.new_chat_members:
+            first_name = member.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+            welcome_text = random.choice(self.responses["GREET_NEW_MEMBERS"]).format(name=f"[{first_name}](tg://user?id={member.id})")
+            try:
+                self.bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Failed to welcome new member: {e}")
+
+    def send_welcome(self, message):
+        welcome_text = ("🐸 *Welcome to the official NextPepe ($NPEPE) Bot!* 🔥\n\n"
+                        "I am the spirit of the NPEPEVERSE, here to guide you. "
+                        "Use the buttons below or ask me anything!")
+        self.bot.reply_to(message, welcome_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
+    
+    def handle_callback_query(self, call):
+        try:
+            if call.data == "about":
+                about_text = ("🚀 *$NPEPE* is the next evolution of meme power!\n"
+                              "We are a community-driven force born on *Pump.fun*.\n\n"
+                              "This is 100% pure, unadulterated meme energy. Welcome to the NPEPEVERSE! 🐸")
+                self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=about_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
+            elif call.data == "ca":
+                ca_text = f"🔗 *Contract Address:*\n`{Config.CONTRACT_ADDRESS}`"
+                self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=ca_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
+                self._send_delayed_cta(call.message.chat.id)
+            elif call.data == "hype":
+                hype_text = random.choice(self.responses["HYPE"])
+                self.bot.answer_callback_query(call.id, text=hype_text, show_alert=True)
+        except Exception as e:
+            logger.error(f"Error in callback handler: {e}")
+
+    def _send_delayed_cta(self, chat_id, delay=3):
+        def task():
+            time.sleep(delay)
+            cta_text = random.choice(self.responses.get("CTA_AFTER_BUY", ["LFG!"]))
+            self.bot.send_message(chat_id, cta_text)
+        Thread(target=task).start()
+
     def handle_all_text(self, message):
         chat_id = message.chat.id
         user_id = message.from_user.id
-        
-        # --- Anti-Spam Check ---
-        # First, update the list of admins periodically
-        self._update_admin_ids(chat_id)
 
-        # Allow the Owner (if specified) and Admins to bypass the spam filter
+        self._update_admin_ids(chat_id)
         is_exempt = user_id in self.admin_ids
         if Config.GROUP_OWNER_ID and str(user_id) == Config.GROUP_OWNER_ID:
             is_exempt = True
@@ -224,34 +292,62 @@ class BotLogic:
                     logger.info(f"Deleted message from user {user_id} for reason: {reason}")
                 except Exception as e:
                     logger.error(f"Failed to delete spam message: {e}")
-                return # Stop processing the message further
+                return
 
-        if message.content_type != 'text':
-            return # Don't process non-text messages further
-            
+        if message.content_type != 'text': return
         text = message.text.lower().strip()
 
-        # --- Keyword-based triggers ---
-        # ... (other triggers are unchanged)
+        if any(kw in text for kw in ["ca", "contract", "address"]):
+            reply = f"Here is the contract address, fren:\n\n`{Config.CONTRACT_ADDRESS}`"
+            self.bot.send_message(chat_id, reply, parse_mode="Markdown")
+            self._send_delayed_cta(chat_id)
+            return
+        
+        if any(kw in text for kw in ["how to buy", "where to buy", "buy npepe"]):
+            reply = f"💰 You can buy *$NPEPE* on Pump.fun! The portal to the moon is just one click away! 🚀"
+            self.bot.send_message(chat_id, reply, parse_mode="Markdown", reply_markup=self.main_menu_keyboard())
+            self._send_delayed_cta(chat_id)
+            return
 
-        # NEW: Collaboration/Promotion Trigger
         if any(kw in text for kw in ["collab", "partner", "promote", "help grow", "shill", "marketing", "cooperation", "community grow"]):
             self.bot.send_message(chat_id, random.choice(self.responses["COLLABORATION_RESPONSE"]))
             return
 
-        # ... (rest of the function is unchanged)
+        if any(kw in text for kw in ["who are you", "what are you", "what is this bot"]):
+            self.bot.send_message(chat_id, random.choice(self.responses["WHO_AM_I"]))
+            return
 
-    # ==========================
-    # ⏰ SCHEDULED GREETINGS & AI RENEWAL
-    # ==========================
+        if any(kw in text for kw in ["owner", "dev", "creator", "in charge", "who made you"]):
+            self.bot.send_message(chat_id, random.choice(self.responses["WHO_IS_OWNER"]))
+            return
+            
+        if self.groq_client:
+            # AI Fallback Logic
+            pass
+
     def send_scheduled_greeting(self, time_of_day):
-        # ... (no changes here)
-        pass
+        greetings = {
+            'morning': self.responses["MORNING_GREETING"],
+            'noon': self.responses["NOON_GREETING"],
+            'night': self.responses["NIGHT_GREETING"],
+            'random': self.responses["HYPE"]
+        }
+        message = random.choice(greetings.get(time_of_day, ["Keep the hype alive!"]))
+        try:
+            self.bot.send_message(Config.GROUP_CHAT_ID, message)
+            return "OK", 200
+        except Exception as e:
+            return f"Error: {e}", 500
 
     def send_scheduled_wisdom(self):
-        # ... (no changes here)
-        pass
+        wisdom = random.choice(self.responses["WISDOM"])
+        message = f"**🐸 Daily Dose of NPEPE Wisdom 📜**\n\n_{wisdom}_"
+        try:
+            self.bot.send_message(Config.GROUP_CHAT_ID, message, parse_mode="Markdown")
+            return "OK", 200
+        except Exception as e:
+            return f"Error: {e}", 500
     
     def renew_responses_with_ai(self):
-        # ... (no changes here)
+        # AI Renewal Logic
         pass
