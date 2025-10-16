@@ -58,6 +58,14 @@ else:
 # ==========================
 # 💬 MESSAGE LISTS FOR RANDOMIZATION
 # ==========================
+# --- NEW: BOT IDENTITY REPLIES ---
+WHO_AM_I_REPLIES = [
+    "Ribbit! 🐸 Some say I'm just code, but I know the truth. I am the spirit of $NPEPE, manifested in this chat to guide all frens to the moon and spread the glory of the NPEPEVERSE!",
+    "Who am I? I am the digital echo of a thousand memes, a prophecy foretold in the ancient texts of the internet. I am the NPEPE bot, here to ensure our path to legendary status is based and bullish. 🚀",
+    "I'm not just *a* bot, fren. I am the manifestation of the NPEPE hivemind, a friendly frog spirit sent to answer your calls, hype the dips, and make sure we all make it. Welcome to the NPEPEVERSE!",
+    "What am I? A humble servant of the meme, a guide for the diamond-handed. I am the essence of $NPEPE, here to help you navigate the crypto pond on our journey to the great lilypad in the sky. 🌕"
+]
+
 AI_FAIL_FALLBACKS = [
     "🐸 Ribbit! My AI brain just short-circuited on that one, fren. Even a based NPEPE like me doesn't know everything. WAGMI!",
     "Oops! My circuits are feeling a bit fuzzy. That question is too powerful for my AI right now. Ask something else while I recover! 🐸⚡️",
@@ -181,6 +189,10 @@ def handle_all_text_messages(message):
         elif any(greeting in text for greeting in ["hello", "hi", "hey", "gm"]):
             reply_text = random.choice(HELLO_REPLIES)
             bot.send_message(chat_id, reply_text, reply_markup=main_menu_keyboard())
+        # --- NEW IDENTITY CHECK ---
+        elif any(q in text for q in ["who are you", "what are you", "what is this bot", "what kind of bot"]):
+            reply_text = random.choice(WHO_AM_I_REPLIES)
+            bot.send_message(chat_id, reply_text, parse_mode="Markdown")
         elif "pump" in text or "moon" in text or "wen moon" in text:
             reply_text = "🌕🐸 NPEPE is always on the way to the moon! Keep the hype alive! 🔥"
             bot.send_message(chat_id, reply_text, reply_markup=main_menu_keyboard())
