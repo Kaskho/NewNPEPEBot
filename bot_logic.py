@@ -32,7 +32,7 @@ class Config:
     # Project Details
     CONTRACT_ADDRESS = "BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump"
     PUMP_FUN_LINK = f"https://pump.fun/{CONTRACT_ADDRESS}"
-    WEBSITE_URL = "https://next-pepe-launchpad-2b8b3071.base44.app"
+    WEBSITE_URL = "https://next-npepe-launchpad-2b8b3071.base44.app" # <-- UPDATED
     TELEGRAM_URL = "https://t.me/NPEPEVERSE"
     TWITTER_URL = "https://x.com/NPEPE_Verse?t=rFeVwGRDJpxwiwjQ8P67Xw&s=09"
 
@@ -280,7 +280,7 @@ class BotLogic:
             except Exception as e: logger.error(f"Failed to welcome new member: {e}")
 
     def send_welcome(self, message):
-        welcome_text = ("🐸 *Welcome to the official NextPepe ($NPEPE) Bot!* 🔥\n\n" "I am the spirit of the NPEPEVERSE, here to guide you. " "Use the buttons below or ask me anything!")
+        welcome_text = ("🐸 *Welcome to the official NextNPEPE ($NPEPE) Bot!* 🔥\n\n" "I am the spirit of the NPEPEVERSE, here to guide you. " "Use the buttons below or ask me anything!")
         self.bot.reply_to(message, welcome_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
     
     def handle_callback_query(self, call):
