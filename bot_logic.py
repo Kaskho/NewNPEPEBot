@@ -118,7 +118,7 @@ class BotLogic:
             
             if should_run:
                 try:
-                    logger.info(f"Running scheduled task: {name} within its time window at {now_utc} UTC")
+                    logger.info(f"Running scheduled task: {name} at {now_utc} UTC")
                     schedule['task'](*schedule['args'])
                     timestamps[name] = today_utc_str
                     updated = True
@@ -141,7 +141,7 @@ class BotLogic:
     def _load_initial_responses(self):
         return {
             "BOT_IDENTITY": [ "Bot? No, fren. I am NPEPE. 🐸", "I'm not just a bot. I am the spirit of the NPEPEVERSE, in digital form. ✨", "Call me a bot if you want, but I'm really just NPEPE's hype machine. My only job is to spread the gospel. LFG! 🚀", "Are you asking if I'm just code? Nah. I'm the based energy of NPEPE, here to send it. *ribbit*", "Part bot, part frog, all legend. But you can just call me NPEPE.", "What kind of bot? The kind that's destined for the moon. I am NPEPE. 🌕", "I'm NPEPE, manifested. My code runs on pure, uncut hype and diamond hands. 💎", "I am the signal, not the noise. I am NPEPE.", "They built a bot, but the spirit of NPEPE took over. So, yeah. I'm NPEPE.", "I'm the ghost in the machine, and the machine is fueled by NPEPE. So, that's what I am. 👻" ],
-            "WHO_IS_OWNER": [ "My dev? Think Satoshi Nakamoto, but with way more memes. A mysterious legend who dropped some based code and vanished into the hype. 🐸👻", "The dev is busy. I'm the caretaker. Any complaints can be submitted to me in the form of a 100x pump. 📈", "In the NPEPEVERSE, the community is the real boss. The dev just lit the fuse. My job as caretaker is to guard the flame and keep the vibes immaculate. ✨", "The creator is a legend whispered on the blockchain. I'm the spokesperson they built to make sure the memes stay dank and the FUD stays away.", "The owner is the spirit of decentralization itself. I'm just the humble groundskeeper of this fine establishment. 🐸" ],
+            "WHO_IS_OWNER": [ "My dev? Think Satoshi Nakamoto, but with way more memes. A mysterious legend who dropped some based code and vanished into the hype. 🐸👻", "The dev is busy. I'm the caretaker. Any complaints can be submitted to me in the form of a 100x pump. 📈", "In the NPEPEVERSE, the community is the real boss. The dev just lit the fuse. My job as caretaker is to guard the flame and keep the vibes immaculate. ✨", "The creator is a legend whispered on the blockchain. I'm the spokesperson they built to make sure the memes stay dank and the FUD stays away.", "The owner is the spirit of decentralization itself. I'm just the humble groundskeeper of this fine establishment. 🐸", "You're looking for the boss? They're busy in the meme labs. You can talk to me, I'm the official spokesperson. What's up, fren? 🔥" ],
             "FINAL_FALLBACK": [ "My circuits are fried from too much hype. Try asking that again, or maybe just buy more $NPEPE? That usually fixes things. 🐸", "Ribbit... what was that? I was busy staring at the chart. Could you rephrase for this simple frog bot? 📈", "That question is too powerful, even for me. For now, let's focus on the mission: HODL, meme, and get to the moon! 🚀🌕", "Error 404: Brain not found. Currently running on pure vibes and diamond hands. Ask me about the contract address instead! 💎", "Maaf, koneksi saya ke bulan sepertinya sedang terganggu. Coba tanyakan lagi nanti. 🛰️", "Otak kodok saya baru saja mengalami 404. Bisa ulangi pertanyaannya, fren?", "Sirkuit hype saya sepertinya kepanasan. Beri saya waktu sejenak untuk mendinginkan diri. 🔥❄️" ],
             "GREET_NEW_MEMBERS": [ "🐸 Welcome to the NPEPEVERSE, {name}! We're a frenly bunch. LFG! 🚀", "Ribbit! A new fren has appeared! Welcome, {name}! Glad to have you hopping with us. 🐸💚", "A wild {name} appears! Welcome to the $NPEPE community. Ask questions, share memes, and let's ride to the moon together! 🌕", "GM, {name}! You've just landed in the best corner of the crypto world. Welcome to the NPEPEVERSE! 🔥" ],
             "MORNING_GREETING": [ "🐸☀️ Rise and ribbit, NPEPEVERSE! A new day to conquer the charts. Let's get this bread! 🔥", "GM legends! Coffee in one hand, diamond hands in the other. Let's make today legendary! 💎🙌", "Wakey wakey, frens! The sun is up and so is the hype. Let's send it! 🚀", "Good morning, NPEPE army! Hope you dreamt of green candles. Now let's make it a reality! 💚", "The early frog gets the gains! GM to all the hustlers in the NPEPEVERSE! 🐸💰", "A beautiful morning to be bullish! Let's show the world the power of NPEPE today! LFG! 🔥", "GM! Let's start the day with positive vibes and a shared mission: the moon! 🌕" ],
@@ -228,6 +228,8 @@ class BotLogic:
     def handle_all_text(self, message):
         try:
             if not message: return
+            
+            # Hanya jalankan anti-spam dan logika terkait grup di dalam grup
             if message.chat.type in ['group', 'supergroup']:
                 chat_id = message.chat.id
                 user_id = message.from_user.id
@@ -247,6 +249,16 @@ class BotLogic:
             lower_text = text.lower().strip()
             chat_id = message.chat.id
 
+            # --- PENANGANAN MENTION OWNER BARU ---
+            if (Config.GROUP_OWNER_ID and message.entities and
+                message.chat.type in ['group', 'supergroup']):
+                for entity in message.entities:
+                    if entity.type == 'text_mention' and str(entity.user.id) == Config.GROUP_OWNER_ID:
+                        logger.info(f"Group owner (ID: {Config.GROUP_OWNER_ID}) was mentioned. Replying.")
+                        self.bot.send_message(chat_id, random.choice(self.responses.get("WHO_IS_OWNER", [])))
+                        return # Hentikan pemrosesan lebih lanjut
+
+            # --- ALUR LOGIKA YANG DIPERBAIKI ---
             if any(kw in lower_text for kw in ["ca", "contract", "address"]):
                 self.bot.send_message(chat_id, f"Here is the contract address, fren:\n\n`{Config.CONTRACT_ADDRESS}`", parse_mode="Markdown")
                 return
