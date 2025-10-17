@@ -92,6 +92,7 @@ class BotLogic:
         # --- THE FINAL, UNIVERSAL UTC SCHEDULE ---
         schedules = {
             'hype_asia_open':  {'hour': 2, 'task': self.send_scheduled_greeting, 'args': ('random',)},
+            'hype_late_asia':  {'hour': 4, 'task': self.send_scheduled_greeting, 'args': ('random',)}, # <-- NEW
             'morning_europe':  {'hour': 7, 'task': self.send_scheduled_greeting, 'args': ('morning',)},
             'wisdom_europe':   {'hour': 9, 'task': self.send_scheduled_wisdom, 'args': ()},
             'noon_universal':  {'hour': 12, 'task': self.send_scheduled_greeting, 'args': ('noon',)},
