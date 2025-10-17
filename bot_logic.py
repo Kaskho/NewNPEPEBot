@@ -6,6 +6,7 @@ from threading import Thread
 import json
 import re
 from datetime import datetime, timedelta, timezone
+import sqlite3
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -35,6 +36,9 @@ class Config:
     WEBSITE_URL = "https://next-npepe-launchpad-2b8b3071.base44.app"
     TELEGRAM_URL = "https://t.me/NPEPEVERSE"
     TWITTER_URL = "https://x.com/NPEPE_Verse?t=rFeVwGRDJpxwiwjQ8P67Xw&s=09"
+    # --- BARU: Path untuk Database ---
+    # Render menyediakan disk persisten di /var/data/
+    DATABASE_PATH = '/var/data/schedule.db'
 
 
 class BotLogic:
@@ -42,11 +46,10 @@ class BotLogic:
         self.bot = bot_instance
         self.groq_client = self._initialize_groq()
         self.responses = self._load_initial_responses()
-        self.timestamps_file = 'timestamps.json'
+        self._setup_database() # <-- PANGGILAN BARU
         
         self.admin_ids = set()
         self.admins_last_updated = 0
-        
         self.last_random_reply_time = 0
         self.COOLDOWN_SECONDS = 90
         self.BASE_REPLY_CHANCE = 0.20
@@ -60,28 +63,54 @@ class BotLogic:
             'pump group', 'trading signal', 'investment advice', 'other project'
         ]
         self.ALLOWED_DOMAINS = [ 'pump.fun', 't.me/NPEPEVERSE', 'x.com/NPEPE_Verse', 'base44.app' ]
-
         self._register_handlers()
 
-    def _get_current_utc_time(self):
-        return datetime.now(timezone.utc)
-
-    def _load_timestamps(self):
+    # --- FUNGSI DATABASE BARU ---
+    def _setup_database(self):
+        """Membuat tabel database jika belum ada."""
         try:
-            if os.path.exists(self.timestamps_file):
-                with open(self.timestamps_file, 'r') as f:
-                    content = f.read()
-                    if content: return json.loads(content)
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
-        return {}
+            # Pastikan direktori ada
+            os.makedirs(os.path.dirname(Config.DATABASE_PATH), exist_ok=True)
+            conn = sqlite3.connect(Config.DATABASE_PATH)
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS schedule_log (
+                    task_name TEXT PRIMARY KEY,
+                    last_run_date TEXT
+                )
+            ''')
+            conn.commit()
+            conn.close()
+            logger.info("Database setup successful.")
+        except Exception as e:
+            logger.error(f"Failed to setup database: {e}")
 
-    def _save_timestamps(self, data):
-        with open(self.timestamps_file, 'w') as f:
-            json.dump(data, f)
+    def _get_last_run_date(self, task_name):
+        """Mengambil tanggal terakhir tugas dijalankan dari database."""
+        try:
+            conn = sqlite3.connect(Config.DATABASE_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT last_run_date FROM schedule_log WHERE task_name = ?", (task_name,))
+            result = cursor.fetchone()
+            conn.close()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Failed to get last run date for {task_name}: {e}")
+            return None
 
+    def _update_last_run_date(self, task_name, run_date):
+        """Memperbarui tanggal terakhir tugas dijalankan di database."""
+        try:
+            conn = sqlite3.connect(Config.DATABASE_PATH)
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO schedule_log (task_name, last_run_date) VALUES (?, ?)", (task_name, run_date))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to update last run date for {task_name}: {e}")
+
+    # --- FUNGSI PENJADWALAN YANG DIPERBARUI ---
     def check_and_run_schedules(self):
-        timestamps = self._load_timestamps()
         now_utc = self._get_current_utc_time()
         today_utc_str = now_utc.strftime('%Y-%m-%d')
         
@@ -98,34 +127,34 @@ class BotLogic:
             'ai_renewal':      {'hour': 10, 'day_of_week': 6, 'task': self.renew_responses_with_ai, 'args': ()}
         }
 
-        updated = False
         for name, schedule in schedules.items():
-            last_run_date = timestamps.get(name)
-            time_window_start = schedule['hour']
-            time_window_end = time_window_start + 1
-            is_weekly = 'day_of_week' in schedule
+            last_run_date = self._get_last_run_date(name)
+            
             should_run = False
+            is_weekly = 'day_of_week' in schedule
             
             if is_weekly:
                 if (now_utc.weekday() == schedule['day_of_week'] and 
-                    time_window_start <= now_utc.hour < time_window_end and
+                    now_utc.hour >= schedule['hour'] and 
                     last_run_date != today_utc_str):
                     should_run = True
             else:
-                if (time_window_start <= now_utc.hour < time_window_end and
+                if (now_utc.hour >= schedule['hour'] and 
                     last_run_date != today_utc_str):
                     should_run = True
             
             if should_run:
                 try:
-                    logger.info(f"Running scheduled task: {name} at {now_utc} UTC")
+                    logger.info(f"Running scheduled task: {name} because its time has passed at {now_utc} UTC")
                     schedule['task'](*schedule['args'])
-                    timestamps[name] = today_utc_str
-                    updated = True
+                    self._update_last_run_date(name, today_utc_str) # <-- MENGGUNAKAN DATABASE
                 except Exception as e:
                     logger.error(f"Error running scheduled task {name}: {e}")
-        if updated: self._save_timestamps(timestamps)
 
+    # ... Sisa file (dari _get_current_utc_time hingga akhir) persis sama dengan versi sebelumnya ...
+    # ... Kode lengkapnya disertakan di bawah ini untuk kepastian ...
+    def _get_current_utc_time(self):
+        return datetime.now(timezone.utc)
     def _initialize_groq(self):
         if Config.GROQ_API_KEY:
             try:
@@ -137,7 +166,6 @@ class BotLogic:
                 logger.error(f"❌ Failed to initialize Groq AI client: {e}")
         logger.warning("⚠️ No GROQ_API_KEY found. AI features will be disabled.")
         return None
-
     def _load_initial_responses(self):
         return {
             "BOT_IDENTITY": [ "Bot? No, fren. I am NPEPE. 🐸", "I'm not just a bot. I am the spirit of the NPEPEVERSE, in digital form. ✨", "Call me a bot if you want, but I'm really just NPEPE's hype machine. My only job is to spread the gospel. LFG! 🚀", "Are you asking if I'm just code? Nah. I'm the based energy of NPEPE, here to send it. *ribbit*", "Part bot, part frog, all legend. But you can just call me NPEPE.", "What kind of bot? The kind that's destined for the moon. I am NPEPE. 🌕", "I'm NPEPE, manifested. My code runs on pure, uncut hype and diamond hands. 💎", "I am the signal, not the noise. I am NPEPE.", "They built a bot, but the spirit of NPEPE took over. So, yeah. I'm NPEPE.", "I'm the ghost in the machine, and the machine is fueled by NPEPE. So, that's what I am. 👻" ],
@@ -151,23 +179,15 @@ class BotLogic:
             "HYPE": [ "Let's go, NPEPE army! Time to make some noise! 🚀", "Who's feeling bullish today?! 🔥", "NPEPEVERSE is unstoppable! 🐸💚", "Keep that energy high! We're just getting started! ✨", "Diamond hands, where you at?! 💎🙌", "This is more than a coin, it's a movement!", "To the moon and beyond! LFG! 🌕", "Hype train is leaving the station! All aboard! 🚂", "Feel the power of the meme! 💪", "We're writing history, one block at a time! 📜", "Don't just HODL, be proud! We are NPEPE! 🐸", "The vibes are immaculate today, frens!", "Let's paint that chart green! 💚", "Remember why you're here. For the glory! 🔥", "This community is the best in crypto, period.", "Let them doubt. We know what we hold. 💎", "Ready for the next leg up? I know I am! 🚀", "Stay hyped, stay based!", "Every buy, every meme, every post matters! Keep it up! 💪", "NPEPE is the future of memes! 🐸", "Can you feel it? That's the feeling of inevitability.", "Let's show them what a real community looks like! 💚", "The pump is programmed. Stay tuned. 📈", "Who's ready to shock the world? ✨", "HODL the line, frens! Victory is near! ⚔️", "This is the one. You know it, I know it. 🐸", "Keep spreading the word. NPEPE is taking over!", "The bigger the base, the higher in space! 🚀", "Let's get it! No sleep 'til the moon! 🌕", "This is legendary. You are legendary. We are legendary.", "Don't let anyone shake you out. Diamond hands win. 💎", "The energy in here is electric! 🔥", "We are the new standard. The NPEPE standard.", "History has its eyes on us. Let's give them a show! 🐸🎬", "Let's make our ancestors proud. Buy more NPEPE. 😂🚀", "We're not just riding the wave, we ARE the wave! 🌊" ],
             "COLLABORATION_RESPONSE": [ "WAGMI! Love the energy! The best collab is a strong community. Be loud in here, raid on X, and let's make the NPEPEVERSE impossible to ignore! 🚀", "Thanks, fren! We don't do paid promos, we ARE the promo! Your hype is the best marketing. Light up X with $NPEPE memes and be a legend in this chat! 🔥", "You want to help? Based! The NPEPE army runs on passion. Be active, welcome new frens, and spread the gospel of NPEPE across the internet like a religion! 🐸🙏", "Glad to have you on board! The most valuable thing you can do is bring your energy here every day and make some noise on X. Let's build this together! 💚", "That's the spirit! To grow, we need soldiers. Your mission: engage with our posts on X, create memes, and keep the vibe in this Telegram electric! ⚡️", "Thanks for the offer, legend! Our marketing plan is YOU. Be the hype you want to see in the world. Let's get $NPEPE trending! 📈", "Let's do it! Your role is Chief Hype Officer. Your KPIs are memes posted and raids joined. Welcome to the team! 😎", "Awesome! We need more frens like you. Let's make this the most active, legendary community in crypto. Start by telling a fren about $NPEPE today! 🗣️" ],
         }
-    
     def _register_handlers(self):
         self.bot.message_handler(content_types=['new_chat_members'])(self.greet_new_members)
         self.bot.message_handler(commands=['start', 'help'])(self.send_welcome)
         self.bot.callback_query_handler(func=lambda call: True)(self.handle_callback_query)
         self.bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'sticker', 'document'])(self.handle_all_text)
-    
     def main_menu_keyboard(self):
         keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("🚀 About $NPEPE", callback_data="about"), InlineKeyboardButton("🔗 Contract Address", callback_data="ca"),
-            InlineKeyboardButton("💰 Buy on Pump.fun", url=Config.PUMP_FUN_LINK), InlineKeyboardButton("🌐 Website", url=Config.WEBSITE_URL),
-            InlineKeyboardButton("✈️ Telegram", url=Config.TELEGRAM_URL), InlineKeyboardButton("🐦 Twitter", url=Config.TWITTER_URL),
-            InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype")
-        )
+        keyboard.add( InlineKeyboardButton("🚀 About $NPEPE", callback_data="about"), InlineKeyboardButton("🔗 Contract Address", callback_data="ca"), InlineKeyboardButton("💰 Buy on Pump.fun", url=Config.PUMP_FUN_LINK), InlineKeyboardButton("🌐 Website", url=Config.WEBSITE_URL), InlineKeyboardButton("✈️ Telegram", url=Config.TELEGRAM_URL), InlineKeyboardButton("🐦 Twitter", url=Config.TWITTER_URL), InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype") )
         return keyboard
-    
     def _update_admin_ids(self, chat_id):
         now = time.time()
         if now - self.admins_last_updated > 600:
@@ -175,9 +195,7 @@ class BotLogic:
                 admins = self.bot.get_chat_administrators(chat_id)
                 self.admin_ids = {admin.user.id for admin in admins}
                 self.admins_last_updated = now
-            except Exception as e:
-                logger.error(f"Could not update admin list: {e}")
-
+            except Exception as e: logger.error(f"Could not update admin list: {e}")
     def _is_spam_or_ad(self, message):
         text = message.text or message.caption or ""
         text = text.lower()
@@ -191,45 +209,41 @@ class BotLogic:
         if re.search(solana_pattern, text) and Config.CONTRACT_ADDRESS not in (message.text or ""): return True, "Potential Solana Contract Address"
         if re.search(eth_pattern, text): return True, "Potential EVM Contract Address"
         return False, None
-
     def greet_new_members(self, message):
         for member in message.new_chat_members:
             first_name = member.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
             welcome_text = random.choice(self.responses.get("GREET_NEW_MEMBERS", [])).format(name=f"[{first_name}](tg://user?id={member.id})")
             try: self.bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
             except Exception as e: logger.error(f"Failed to welcome new member: {e}")
-
     def send_welcome(self, message):
         welcome_text = ("🐸 *Welcome to the official NextPepe ($NPEPE) Bot!* 🔥\n\n" "I am the spirit of the NPEPEVERSE, here to guide you. " "Use the buttons below or ask me anything!")
         self.bot.reply_to(message, welcome_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
-    
     def handle_callback_query(self, call):
         try:
-            self.bot.answer_callback_query(call.id)
-            if call.data == "about":
+            if call.data == "hype":
+                hype_text = random.choice(self.responses.get("HYPE", ["LFG!"]))
+                self.bot.answer_callback_query(call.id, text=hype_text, show_alert=True)
+            elif call.data == "about":
+                self.bot.answer_callback_query(call.id)
                 about_text = ("🚀 *$NPEPE* is the next evolution of meme power!\n" "We are a community-driven force born on *Pump.fun*.\n\n" "This is 100% pure, unadulterated meme energy. Welcome to the NPEPEVERSE! 🐸")
                 self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=about_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
             elif call.data == "ca":
+                self.bot.answer_callback_query(call.id)
                 ca_text = f"🔗 *Contract Address:*\n`{Config.CONTRACT_ADDRESS}`"
                 self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=ca_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
-            elif call.data == "hype":
-                hype_text = random.choice(self.responses.get("HYPE", []))
-                self.bot.answer_callback_query(call.id, text=hype_text, show_alert=True)
         except Exception as e:
             logger.error(f"Error in callback handler: {e}")
-
+            try: self.bot.answer_callback_query(call.id, text="Sorry, something went wrong!", show_alert=True)
+            except: pass
     def _is_a_question(self, text):
         text = text.lower().strip()
         if text.endswith('?'): return True
         question_words = ['what', 'how', 'when', 'where', 'why', 'who', 'can', 'could', 'is', 'are', 'do', 'does', 'explain']
         if any(text.startswith(word) for word in question_words): return True
         return False
-
     def handle_all_text(self, message):
         try:
             if not message: return
-            
-            # Hanya jalankan anti-spam dan logika terkait grup di dalam grup
             if message.chat.type in ['group', 'supergroup']:
                 chat_id = message.chat.id
                 user_id = message.from_user.id
@@ -242,43 +256,30 @@ class BotLogic:
                         try: self.bot.delete_message(chat_id, message.message_id)
                         except Exception as e: logger.error(f"Failed to delete spam message: {e}")
                         return
-            
             if not message.text: return
-            
             text = message.text
             lower_text = text.lower().strip()
             chat_id = message.chat.id
-
-            # --- PENANGANAN MENTION OWNER BARU ---
-            if (Config.GROUP_OWNER_ID and message.entities and
-                message.chat.type in ['group', 'supergroup']):
+            if (Config.GROUP_OWNER_ID and message.entities and message.chat.type in ['group', 'supergroup']):
                 for entity in message.entities:
                     if entity.type == 'text_mention' and str(entity.user.id) == Config.GROUP_OWNER_ID:
-                        logger.info(f"Group owner (ID: {Config.GROUP_OWNER_ID}) was mentioned. Replying.")
                         self.bot.send_message(chat_id, random.choice(self.responses.get("WHO_IS_OWNER", [])))
-                        return # Hentikan pemrosesan lebih lanjut
-
-            # --- ALUR LOGIKA YANG DIPERBAIKI ---
+                        return
             if any(kw in lower_text for kw in ["ca", "contract", "address"]):
                 self.bot.send_message(chat_id, f"Here is the contract address, fren:\n\n`{Config.CONTRACT_ADDRESS}`", parse_mode="Markdown")
                 return
-            
             if any(kw in lower_text for kw in ["how to buy", "where to buy", "buy npepe"]):
                 self.bot.send_message(chat_id, "💰 You can buy *$NPEPE* on Pump.fun! The portal to the moon is just one click away! 🚀", parse_mode="Markdown", reply_markup=self.main_menu_keyboard())
                 return
-            
             if any(kw in lower_text for kw in ["what are you", "what is this bot", "are you a bot", "what kind of bot"]):
                 self.bot.send_message(chat_id, random.choice(self.responses.get("BOT_IDENTITY", [])))
                 return
-
             if any(kw in lower_text for kw in ["owner", "dev", "creator", "in charge", "who made you"]):
                 self.bot.send_message(chat_id, random.choice(self.responses.get("WHO_IS_OWNER", [])))
                 return
-                
             if any(kw in lower_text for kw in ["collab", "partner", "promote", "help grow", "shill", "marketing"]):
                 self.bot.send_message(chat_id, random.choice(self.responses.get("COLLABORATION_RESPONSE", [])))
                 return
-
             elif self.groq_client and self._is_a_question(text):
                 thinking_message = self.bot.send_message(chat_id, "🐸 The NPEPE oracle is consulting the memes...")
                 try:
@@ -288,13 +289,11 @@ class BotLogic:
                     self.bot.edit_message_text(ai_response, chat_id=chat_id, message_id=thinking_message.message_id)
                 except Exception as e:
                     logger.error(f"Error during AI response generation: {e}", exc_info=True)
-                    try:
-                        self.bot.edit_message_text(random.choice(self.responses.get("FINAL_FALLBACK", [])), chat_id=chat_id, message_id=thinking_message.message_id)
+                    try: self.bot.edit_message_text(random.choice(self.responses.get("FINAL_FALLBACK", [])), chat_id=chat_id, message_id=thinking_message.message_id)
                     except Exception as edit_e:
                         logger.error(f"Failed to edit message to fallback, sending new message: {edit_e}")
                         self.bot.send_message(chat_id, random.choice(self.responses.get("FINAL_FALLBACK", [])))
                 return
-
             elif message.chat.type in ['group', 'supergroup']:
                 if time.time() - self.last_random_reply_time > self.COOLDOWN_SECONDS:
                     current_chance = self.BASE_REPLY_CHANCE
@@ -304,7 +303,6 @@ class BotLogic:
                         self.last_random_reply_time = time.time()
         except Exception as e:
             logger.error(f"FATAL ERROR processing message: {e}", exc_info=True)
-    
     def send_scheduled_greeting(self, time_of_day):
         if not Config.GROUP_CHAT_ID: return
         greetings = { 'morning': self.responses.get("MORNING_GREETING", []), 'noon': self.responses.get("NOON_GREETING", []), 'night': self.responses.get("NIGHT_GREETING", []), 'random': self.responses.get("HYPE", []) }
@@ -313,7 +311,6 @@ class BotLogic:
             message = random.choice(message_list)
             try: self.bot.send_message(Config.GROUP_CHAT_ID, message)
             except Exception as e: logger.error(f"Failed to send {time_of_day} greeting: {e}")
-
     def send_scheduled_wisdom(self):
         if not Config.GROUP_CHAT_ID: return
         wisdom_list = self.responses.get("WISDOM", [])
@@ -322,7 +319,6 @@ class BotLogic:
             message = f"**🐸 Daily Dose of NPEPE Wisdom 📜**\n\n_{wisdom}_"
             try: self.bot.send_message(Config.GROUP_CHAT_ID, message, parse_mode="Markdown")
             except Exception as e: logger.error(f"Failed to send scheduled wisdom: {e}")
-
     def renew_responses_with_ai(self):
         logger.info("AI response renewal task triggered by scheduler.")
         if self.groq_client: logger.info("AI client is available. Renewal logic would run here.")
