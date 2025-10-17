@@ -7,7 +7,7 @@ from bot_logic import BotLogic, Config
 from waitress import serve
 
 # ==========================
-# 🔧 CONFIGURATION & INITIALIZATION
+# 🔧 KONFIGURASI & INISIALISASI
 # ==========================
 logging.basicConfig(
     level=logging.INFO,
@@ -23,62 +23,66 @@ try:
         bot = telebot.TeleBot(Config.BOT_TOKEN, threaded=False)
         bot_logic = BotLogic(bot)
     else:
-        logger.critical("FATAL: BOT_TOKEN and WEBHOOK_BASE_URL must be set.")
+        logger.critical("FATAL: BOT_TOKEN dan WEBHOOK_BASE_URL harus diatur.")
 except Exception as e:
-    logger.critical(f"An error occurred during bot initialization: {e}")
+    logger.critical(f"Terjadi error saat inisialisasi bot: {e}")
 
 # ==========================
-# 🌐 FLASK WEB ROUTES
+# 🌐 RUTE WEB FLASK
 # ==========================
+
+# Endpoint ini menerima pembaruan dari Telegram
 @app.route(f'/{Config.BOT_TOKEN}', methods=['POST'])
 def webhook():
     if bot_logic and request.headers.get('content-type') == 'application/json':
         try:
-            # On every real message, check the schedule first
+            # Pada setiap pesan, periksa jadwal terlebih dahulu
             bot_logic.check_and_run_schedules()
             
             json_string = request.get_data().decode('utf-8')
             update = telebot.types.Update.de_json(json_string)
             bot.process_new_updates([update])
         except Exception as e:
-            # This is a safety net. It will log any unexpected crash from a bad update.
-            logger.error(f"An unhandled exception occurred in the webhook: {e}", exc_info=True)
+            # Jaring pengaman untuk menangkap crash yang tidak terduga
+            logger.error(f"Terjadi pengecualian yang tidak ditangani di webhook: {e}", exc_info=True)
         
-        # Always return OK to Telegram to prevent it from re-sending the same broken message
+        # Selalu kembalikan "OK" ke Telegram
         return "OK", 200
     else:
         abort(403)
 
+# Endpoint "Keep-Alive" untuk mencegah bot tertidur
 @app.route('/health', methods=['GET'])
 def health_check():
-    """This endpoint is pinged by a free service to keep the bot awake and trigger schedules."""
-    logger.info("Health check ping received. Checking schedules.")
+    logger.info("Ping 'Health Check' diterima. Memeriksa jadwal.")
     if bot_logic:
         bot_logic.check_and_run_schedules()
-    return "Bot is alive and schedules checked.", 200
+    return "Bot hidup dan jadwal telah diperiksa.", 200
 
+# Halaman indeks utama
 @app.route('/', methods=['GET'])
 def index():
-    return "🐸 NPEPE Telegram Bot is live and self-scheduling!", 200
+    return "🐸 Bot Telegram NPEPE hidup dan menjadwalkan dirinya sendiri!", 200
 
 # ==========================
-# 🚀 MAIN ENTRY POINT
+# 🚀 TITIK MASUK UTAMA
 # ==========================
 if __name__ == "__main__":
     if bot and bot_logic:
-        logger.info("Starting bot and setting webhook...")
+        logger.info("Memulai bot dan mengatur webhook...")
         bot.remove_webhook()
         time.sleep(0.5)
         success = bot.set_webhook(url=Config.WEBHOOK_URL)
         if success:
-            logger.info(f"✅ Webhook set successfully to: {Config.WEBHOOK_URL}")
+            logger.info(f"✅ Webhook berhasil diatur ke: {Config.WEBHOOK_URL}")
         else:
-            logger.error(f"❌ Webhook set failed. Check your WEBHOOK_BASE_URL.")
+            logger.error(f"❌ Pengaturan webhook gagal. Periksa WEBHOOK_BASE_URL Anda.")
+        
         port = int(os.environ.get("PORT", 10000))
         serve(app, host="0.0.0.0", port=port)
     else:
-        logger.error("Bot not initialized. Server will run in a degraded state.")
+        logger.error("Bot tidak diinisialisasi. Server akan berjalan dalam mode terdegradasi.")
         @app.route('/')
         def error_page():
-            return "Bot configuration is incomplete. Please check environment variables.", 500
+            return "Konfigurasi bot tidak lengkap. Silakan periksa variabel lingkungan.", 500
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
