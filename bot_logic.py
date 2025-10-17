@@ -67,12 +67,24 @@ class BotLogic:
         return datetime.now(timezone.utc)
 
     def _load_timestamps(self):
+        """
+        Loads the last run timestamps from a file.
+        THIS IS THE FIXED VERSION THAT ALWAYS RETURNS A DICTIONARY.
+        """
         try:
             if os.path.exists(self.timestamps_file):
                 with open(self.timestamps_file, 'r') as f:
-                    return json.load(f)
+                    # Handle case where file might be empty
+                    content = f.read()
+                    if content:
+                        return json.loads(content)
         except (json.JSONDecodeError, FileNotFoundError):
+            # If file is corrupt or not found, return an empty dict
+            logger.warning("timestamps.json is corrupt or not found. A new one will be created.")
             return {}
+        
+        # If the file doesn't exist or is empty, return a fresh dictionary
+        return {}
 
     def _save_timestamps(self, data):
         with open(self.timestamps_file, 'w') as f:
@@ -134,8 +146,10 @@ class BotLogic:
         return None
 
     def _load_initial_responses(self):
+        # This function contains all your 100+ hype messages and other responses.
+        # It is unchanged and omitted here for brevity, but it is required.
         return {
-            "GREET_NEW_MEMBERS": [
+             "GREET_NEW_MEMBERS": [
                 "🐸 Welcome to the NPEPEVERSE, {name}! We're a frenly bunch. LFG! 🚀",
                 "Ribbit! A new fren has appeared! Welcome, {name}! Glad to have you hopping with us. 🐸💚",
                 "A wild {name} appears! Welcome to the $NPEPE community. Ask questions, share memes, and let's ride to the moon together! 🌕",
