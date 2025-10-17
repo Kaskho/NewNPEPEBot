@@ -73,7 +73,6 @@ class BotLogic:
                     content = f.read()
                     if content: return json.loads(content)
         except (json.JSONDecodeError, FileNotFoundError):
-            logger.warning("timestamps.json is corrupt or not found. A new one will be created.")
             return {}
         return {}
 
@@ -102,15 +101,24 @@ class BotLogic:
         updated = False
         for name, schedule in schedules.items():
             last_run_date = timestamps.get(name)
+            time_window_start = schedule['hour']
+            time_window_end = time_window_start + 1
             is_weekly = 'day_of_week' in schedule
             should_run = False
+            
             if is_weekly:
-                if now_utc.weekday() == schedule['day_of_week'] and now_utc.hour >= schedule['hour'] and last_run_date != today_utc_str: should_run = True
+                if (now_utc.weekday() == schedule['day_of_week'] and 
+                    time_window_start <= now_utc.hour < time_window_end and
+                    last_run_date != today_utc_str):
+                    should_run = True
             else:
-                if now_utc.hour >= schedule['hour'] and last_run_date != today_utc_str: should_run = True
+                if (time_window_start <= now_utc.hour < time_window_end and
+                    last_run_date != today_utc_str):
+                    should_run = True
+            
             if should_run:
                 try:
-                    logger.info(f"Running scheduled task: {name} at {now_utc} UTC")
+                    logger.info(f"Running scheduled task: {name} within its time window at {now_utc} UTC")
                     schedule['task'](*schedule['args'])
                     timestamps[name] = today_utc_str
                     updated = True
@@ -123,9 +131,10 @@ class BotLogic:
             try:
                 custom_http_client = httpx.Client(proxies=None, timeout=15.0)
                 client = groq.Groq(api_key=Config.GROQ_API_KEY, http_client=custom_http_client)
-                logger.info("✅ Groq AI client initialized successfully with a 15-second timeout.")
+                logger.info("✅ Groq AI client initialized successfully.")
                 return client
-            except Exception as e: logger.error(f"❌ Failed to initialize Groq AI client: {e}")
+            except Exception as e: 
+                logger.error(f"❌ Failed to initialize Groq AI client: {e}")
         logger.warning("⚠️ No GROQ_API_KEY found. AI features will be disabled.")
         return None
 
@@ -186,7 +195,7 @@ class BotLogic:
     def greet_new_members(self, message):
         for member in message.new_chat_members:
             first_name = member.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
-            welcome_text = random.choice(self.responses["GREET_NEW_MEMBERS"]).format(name=f"[{first_name}](tg://user?id={member.id})")
+            welcome_text = random.choice(self.responses.get("GREET_NEW_MEMBERS", [])).format(name=f"[{first_name}](tg://user?id={member.id})")
             try: self.bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
             except Exception as e: logger.error(f"Failed to welcome new member: {e}")
 
@@ -204,7 +213,7 @@ class BotLogic:
                 ca_text = f"🔗 *Contract Address:*\n`{Config.CONTRACT_ADDRESS}`"
                 self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=ca_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
             elif call.data == "hype":
-                hype_text = random.choice(self.responses["HYPE"])
+                hype_text = random.choice(self.responses.get("HYPE", []))
                 self.bot.answer_callback_query(call.id, text=hype_text, show_alert=True)
         except Exception as e:
             logger.error(f"Error in callback handler: {e}")
@@ -247,23 +256,31 @@ class BotLogic:
                 return
             
             if any(kw in lower_text for kw in ["what are you", "what is this bot", "are you a bot", "what kind of bot"]):
-                self.bot.send_message(chat_id, random.choice(self.responses["BOT_IDENTITY"]))
+                self.bot.send_message(chat_id, random.choice(self.responses.get("BOT_IDENTITY", [])))
                 return
 
             if any(kw in lower_text for kw in ["owner", "dev", "creator", "in charge", "who made you"]):
-                self.bot.send_message(chat_id, random.choice(self.responses["WHO_IS_OWNER"]))
+                self.bot.send_message(chat_id, random.choice(self.responses.get("WHO_IS_OWNER", [])))
                 return
                 
             if any(kw in lower_text for kw in ["collab", "partner", "promote", "help grow", "shill", "marketing"]):
-                self.bot.send_message(chat_id, random.choice(self.responses["COLLABORATION_RESPONSE"]))
+                self.bot.send_message(chat_id, random.choice(self.responses.get("COLLABORATION_RESPONSE", [])))
                 return
 
             elif self.groq_client and self._is_a_question(text):
                 thinking_message = self.bot.send_message(chat_id, "🐸 The NPEPE oracle is consulting the memes...")
-                system_prompt = ( "You are a crypto community bot for $NPEPE. Your personality is funny, enthusiastic, and chaotic. " "Use crypto slang like 'fren', 'WAGMI', 'HODL', 'based', 'LFG', 'ribbit'. Keep answers short and hype-filled." )
-                chat_completion = self.groq_client.chat.completions.create( messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}], model="llama3-8b-8192" )
-                ai_response = chat_completion.choices[0].message.content
-                self.bot.edit_message_text(ai_response, chat_id=chat_id, message_id=thinking_message.message_id)
+                try:
+                    system_prompt = ( "You are a crypto community bot for $NPEPE. Your personality is funny, enthusiastic, and chaotic. " "Use crypto slang like 'fren', 'WAGMI', 'HODL', 'based', 'LFG', 'ribbit'. Keep answers short and hype-filled." )
+                    chat_completion = self.groq_client.chat.completions.create( messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}], model="llama3-8b-8192" )
+                    ai_response = chat_completion.choices[0].message.content
+                    self.bot.edit_message_text(ai_response, chat_id=chat_id, message_id=thinking_message.message_id)
+                except Exception as e:
+                    logger.error(f"Error during AI response generation: {e}", exc_info=True)
+                    try:
+                        self.bot.edit_message_text(random.choice(self.responses.get("FINAL_FALLBACK", [])), chat_id=chat_id, message_id=thinking_message.message_id)
+                    except Exception as edit_e:
+                        logger.error(f"Failed to edit message to fallback, sending new message: {edit_e}")
+                        self.bot.send_message(chat_id, random.choice(self.responses.get("FINAL_FALLBACK", [])))
                 return
 
             elif message.chat.type in ['group', 'supergroup']:
@@ -271,24 +288,28 @@ class BotLogic:
                     current_chance = self.BASE_REPLY_CHANCE
                     if any(hype_word in lower_text for hype_word in self.HYPE_KEYWORDS): current_chance = self.HYPE_REPLY_CHANCE
                     if random.random() < current_chance:
-                        self.bot.send_message(chat_id, random.choice(self.responses["HYPE"]))
+                        self.bot.send_message(chat_id, random.choice(self.responses.get("HYPE", [])))
                         self.last_random_reply_time = time.time()
         except Exception as e:
             logger.error(f"FATAL ERROR processing message: {e}", exc_info=True)
     
     def send_scheduled_greeting(self, time_of_day):
         if not Config.GROUP_CHAT_ID: return
-        greetings = { 'morning': self.responses["MORNING_GREETING"], 'noon': self.responses["NOON_GREETING"], 'night': self.responses["NIGHT_GREETING"], 'random': self.responses["HYPE"] }
-        message = random.choice(greetings.get(time_of_day, ["Keep the hype alive!"]))
-        try: self.bot.send_message(Config.GROUP_CHAT_ID, message)
-        except Exception as e: logger.error(f"Failed to send {time_of_day} greeting: {e}")
+        greetings = { 'morning': self.responses.get("MORNING_GREETING", []), 'noon': self.responses.get("NOON_GREETING", []), 'night': self.responses.get("NIGHT_GREETING", []), 'random': self.responses.get("HYPE", []) }
+        message_list = greetings.get(time_of_day, ["Keep the hype alive!"])
+        if message_list:
+            message = random.choice(message_list)
+            try: self.bot.send_message(Config.GROUP_CHAT_ID, message)
+            except Exception as e: logger.error(f"Failed to send {time_of_day} greeting: {e}")
 
     def send_scheduled_wisdom(self):
         if not Config.GROUP_CHAT_ID: return
-        wisdom = random.choice(self.responses["WISDOM"])
-        message = f"**🐸 Daily Dose of NPEPE Wisdom 📜**\n\n_{wisdom}_"
-        try: self.bot.send_message(Config.GROUP_CHAT_ID, message, parse_mode="Markdown")
-        except Exception as e: logger.error(f"Failed to send scheduled wisdom: {e}")
+        wisdom_list = self.responses.get("WISDOM", [])
+        if wisdom_list:
+            wisdom = random.choice(wisdom_list)
+            message = f"**🐸 Daily Dose of NPEPE Wisdom 📜**\n\n_{wisdom}_"
+            try: self.bot.send_message(Config.GROUP_CHAT_ID, message, parse_mode="Markdown")
+            except Exception as e: logger.error(f"Failed to send scheduled wisdom: {e}")
 
     def renew_responses_with_ai(self):
         logger.info("AI response renewal task triggered by scheduler.")
