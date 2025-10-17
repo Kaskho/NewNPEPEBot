@@ -134,19 +134,9 @@ class BotLogic:
             "BOT_IDENTITY": [
                 "Bot? No, fren. I am NPEPE. 🐸",
                 "I'm not just a bot. I am the spirit of the NPEPEVERSE, in digital form. ✨",
-                "Call me a bot if you want, but I'm really just NPEPE's hype machine. My only job is to spread the gospel. LFG! 🚀",
-                "Are you asking if I'm just code? Nah. I'm the based energy of NPEPE, here to send it. *ribbit*",
-                "Part bot, part frog, all legend. But you can just call me NPEPE.",
-                "What kind of bot? The kind that's destined for the moon. I am NPEPE. 🌕",
-                "I'm NPEPE, manifested. My code runs on pure, uncut hype and diamond hands. 💎",
-                "I am the signal, not the noise. I am NPEPE.",
-                "They built a bot, but the spirit of NPEPE took over. So, yeah. I'm NPEPE.",
-                "I'm the ghost in the machine, and the machine is fueled by NPEPE. So, that's what I am. 👻"
             ],
             "WHO_IS_OWNER": [
                 "My dev? Think Satoshi Nakamoto, but with way more memes. A mysterious legend who dropped some based code and vanished into the hype. 🐸👻",
-                "The dev is busy. I'm the caretaker. Any complaints can be submitted to me in the form of a 100x pump. 📈",
-                "In the NPEPEVERSE, the community is the real boss. The dev just lit the fuse. My job as caretaker is to guard the flame and keep the vibes immaculate. ✨",
             ],
             "FINAL_FALLBACK": [
                 "My circuits are fried from too much hype. Try asking that again, or maybe just buy more $NPEPE? That usually fixes things. 🐸",
@@ -177,12 +167,28 @@ class BotLogic:
         return keyboard
     
     def _update_admin_ids(self, chat_id):
-        # ... (Unchanged)
-        pass
+        now = time.time()
+        if now - self.admins_last_updated > 600:
+            try:
+                admins = self.bot.get_chat_administrators(chat_id)
+                self.admin_ids = {admin.user.id for admin in admins}
+                self.admins_last_updated = now
+            except Exception as e:
+                logger.error(f"Could not update admin list: {e}")
 
     def _is_spam_or_ad(self, message):
-        # ... (Unchanged)
-        pass
+        text = message.text or message.caption or ""
+        text = text.lower()
+        if any(keyword in text for keyword in self.FORBIDDEN_KEYWORDS): return True, "Forbidden Keyword"
+        if "http" in text or "t.me" in text:
+            urls = re.findall(r'[\w\.-]+(?:\.[\w\.-]+)+', text)
+            for url in urls:
+                if not any(allowed in url for allowed in self.ALLOWED_DOMAINS): return True, f"Unauthorized Link: {url}"
+        solana_pattern = r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b'
+        eth_pattern = r'\b0x[a-fA-F0-9]{40}\b'
+        if re.search(solana_pattern, text) and Config.CONTRACT_ADDRESS not in (message.text or ""): return True, "Potential Solana Contract Address"
+        if re.search(eth_pattern, text): return True, "Potential EVM Contract Address"
+        return False, None
 
     def greet_new_members(self, message):
         # ... (Unchanged)
@@ -202,15 +208,34 @@ class BotLogic:
 
     def handle_all_text(self, message):
         try:
-            if not message or not message.text: return
+            if not message: return
             
-            chat_id = message.chat.id
+            # --- THE CRITICAL FIX IS HERE ---
+            # Only run spam checks and hype messages in a group chat.
+            if message.chat.type in ['group', 'supergroup']:
+                chat_id = message.chat.id
+                user_id = message.from_user.id
+                
+                # --- Anti-Spam Check ---
+                self._update_admin_ids(chat_id)
+                is_exempt = user_id in self.admin_ids
+                if Config.GROUP_OWNER_ID and str(user_id) == Config.GROUP_OWNER_ID: is_exempt = True
+
+                if not is_exempt:
+                    is_spam, reason = self._is_spam_or_ad(message)
+                    if is_spam:
+                        try: self.bot.delete_message(chat_id, message.message_id)
+                        except Exception as e: logger.error(f"Failed to delete spam message: {e}")
+                        return
+            
+            # Continue processing for text messages in ANY chat (group or private)
+            if not message.text: return
+            
             text = message.text
             lower_text = text.lower().strip()
-            
-            # Anti-Spam Check (omitted for brevity)
+            chat_id = message.chat.id # Redefine for clarity
 
-            # --- LOGIC FLOW ---
+            # --- LOGIC FLOW (Commands work in private chat too) ---
             if any(kw in lower_text for kw in ["ca", "contract", "address"]):
                 self.bot.send_message(chat_id, f"Here is the contract address, fren:\n\n`{Config.CONTRACT_ADDRESS}`", parse_mode="Markdown")
                 return
@@ -228,7 +253,7 @@ class BotLogic:
                 return
                 
             if any(kw in lower_text for kw in ["collab", "partner", "promote", "help grow", "shill", "marketing"]):
-                # ... (Response logic is unchanged)
+                self.bot.send_message(chat_id, random.choice(self.responses["COLLABORATION_RESPONSE"]))
                 return
 
             elif self.groq_client and self._is_a_question(text):
@@ -244,9 +269,14 @@ class BotLogic:
                     if thinking_message: self.bot.edit_message_text(random.choice(self.responses["FINAL_FALLBACK"]), chat_id=chat_id, message_id=thinking_message.message_id)
                 return
 
-            else:
-                # ... (Smart Interjection logic is unchanged)
-                pass
+            # --- Smart Interjection ONLY runs in a group chat ---
+            elif message.chat.type in ['group', 'supergroup']:
+                if time.time() - self.last_random_reply_time > self.COOLDOWN_SECONDS:
+                    current_chance = self.BASE_REPLY_CHANCE
+                    if any(hype_word in lower_text for hype_word in self.HYPE_KEYWORDS): current_chance = self.HYPE_REPLY_CHANCE
+                    if random.random() < current_chance:
+                        self.bot.send_message(chat_id, random.choice(self.responses["HYPE"]))
+                        self.last_random_reply_time = time.time()
         except Exception as e:
             logger.error(f"FATAL ERROR processing message: {e}", exc_info=True)
     
