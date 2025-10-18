@@ -64,8 +64,10 @@ class BotLogic:
         self._register_handlers()
 
     def _setup_database(self):
+        """Membuat tabel database jika belum ada."""
         try:
-            os.makedirs(os.path.dirname(Config.DATABASE_PATH), exist_ok=True)
+            # --- PERBAIKAN DI SINI ---
+            # Baris os.makedirs DIHAPUS. Kita asumsikan /data sudah ada dari render.yaml.
             conn = sqlite3.connect(Config.DATABASE_PATH)
             cursor = conn.cursor()
             cursor.execute('''
@@ -78,7 +80,7 @@ class BotLogic:
             conn.close()
             logger.info(f"Database setup successful at {Config.DATABASE_PATH}")
         except Exception as e:
-            logger.error(f"Failed to setup database: {e}")
+            logger.error(f"Failed to setup database: {e}", exc_info=True)
 
     def _get_last_run_date(self, task_name):
         try:
