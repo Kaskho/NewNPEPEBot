@@ -36,9 +36,7 @@ class Config:
     WEBSITE_URL = "https://next-npepe-launchpad-2b8b3071.base44.app"
     TELEGRAM_URL = "https://t.me/NPEPEVERSE"
     TWITTER_URL = "https://x.com/NPEPE_Verse?t=rFeVwGRDJpxwiwjQ8P67Xw&s=09"
-    # --- BARU: Path untuk Database ---
-    # Render menyediakan disk persisten di /var/data/
-    DATABASE_PATH = '/var/data/schedule.db'
+    DATABASE_PATH = '/data/schedule.db'
 
 
 class BotLogic:
@@ -46,7 +44,7 @@ class BotLogic:
         self.bot = bot_instance
         self.groq_client = self._initialize_groq()
         self.responses = self._load_initial_responses()
-        self._setup_database() # <-- PANGGILAN BARU
+        self._setup_database()
         
         self.admin_ids = set()
         self.admins_last_updated = 0
@@ -65,11 +63,8 @@ class BotLogic:
         self.ALLOWED_DOMAINS = [ 'pump.fun', 't.me/NPEPEVERSE', 'x.com/NPEPE_Verse', 'base44.app' ]
         self._register_handlers()
 
-    # --- FUNGSI DATABASE BARU ---
     def _setup_database(self):
-        """Membuat tabel database jika belum ada."""
         try:
-            # Pastikan direktori ada
             os.makedirs(os.path.dirname(Config.DATABASE_PATH), exist_ok=True)
             conn = sqlite3.connect(Config.DATABASE_PATH)
             cursor = conn.cursor()
@@ -81,12 +76,11 @@ class BotLogic:
             ''')
             conn.commit()
             conn.close()
-            logger.info("Database setup successful.")
+            logger.info(f"Database setup successful at {Config.DATABASE_PATH}")
         except Exception as e:
             logger.error(f"Failed to setup database: {e}")
 
     def _get_last_run_date(self, task_name):
-        """Mengambil tanggal terakhir tugas dijalankan dari database."""
         try:
             conn = sqlite3.connect(Config.DATABASE_PATH)
             cursor = conn.cursor()
@@ -99,7 +93,6 @@ class BotLogic:
             return None
 
     def _update_last_run_date(self, task_name, run_date):
-        """Memperbarui tanggal terakhir tugas dijalankan di database."""
         try:
             conn = sqlite3.connect(Config.DATABASE_PATH)
             cursor = conn.cursor()
@@ -109,7 +102,6 @@ class BotLogic:
         except Exception as e:
             logger.error(f"Failed to update last run date for {task_name}: {e}")
 
-    # --- FUNGSI PENJADWALAN YANG DIPERBARUI ---
     def check_and_run_schedules(self):
         now_utc = self._get_current_utc_time()
         today_utc_str = now_utc.strftime('%Y-%m-%d')
@@ -129,32 +121,27 @@ class BotLogic:
 
         for name, schedule in schedules.items():
             last_run_date = self._get_last_run_date(name)
-            
             should_run = False
             is_weekly = 'day_of_week' in schedule
             
             if is_weekly:
-                if (now_utc.weekday() == schedule['day_of_week'] and 
-                    now_utc.hour >= schedule['hour'] and 
-                    last_run_date != today_utc_str):
+                if (now_utc.weekday() == schedule['day_of_week'] and now_utc.hour >= schedule['hour'] and last_run_date != today_utc_str):
                     should_run = True
             else:
-                if (now_utc.hour >= schedule['hour'] and 
-                    last_run_date != today_utc_str):
+                if (now_utc.hour >= schedule['hour'] and last_run_date != today_utc_str):
                     should_run = True
             
             if should_run:
                 try:
                     logger.info(f"Running scheduled task: {name} because its time has passed at {now_utc} UTC")
                     schedule['task'](*schedule['args'])
-                    self._update_last_run_date(name, today_utc_str) # <-- MENGGUNAKAN DATABASE
+                    self._update_last_run_date(name, today_utc_str)
                 except Exception as e:
                     logger.error(f"Error running scheduled task {name}: {e}")
 
-    # ... Sisa file (dari _get_current_utc_time hingga akhir) persis sama dengan versi sebelumnya ...
-    # ... Kode lengkapnya disertakan di bawah ini untuk kepastian ...
     def _get_current_utc_time(self):
         return datetime.now(timezone.utc)
+    
     def _initialize_groq(self):
         if Config.GROQ_API_KEY:
             try:
@@ -166,6 +153,7 @@ class BotLogic:
                 logger.error(f"❌ Failed to initialize Groq AI client: {e}")
         logger.warning("⚠️ No GROQ_API_KEY found. AI features will be disabled.")
         return None
+
     def _load_initial_responses(self):
         return {
             "BOT_IDENTITY": [ "Bot? No, fren. I am NPEPE. 🐸", "I'm not just a bot. I am the spirit of the NPEPEVERSE, in digital form. ✨", "Call me a bot if you want, but I'm really just NPEPE's hype machine. My only job is to spread the gospel. LFG! 🚀", "Are you asking if I'm just code? Nah. I'm the based energy of NPEPE, here to send it. *ribbit*", "Part bot, part frog, all legend. But you can just call me NPEPE.", "What kind of bot? The kind that's destined for the moon. I am NPEPE. 🌕", "I'm NPEPE, manifested. My code runs on pure, uncut hype and diamond hands. 💎", "I am the signal, not the noise. I am NPEPE.", "They built a bot, but the spirit of NPEPE took over. So, yeah. I'm NPEPE.", "I'm the ghost in the machine, and the machine is fueled by NPEPE. So, that's what I am. 👻" ],
