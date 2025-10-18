@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 import threading
 
-# Optional libraries for flexibility
+# Pustaka opsional untuk fleksibilitas
 try:
     import groq
     import httpx
@@ -24,7 +24,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ==========================
-# 🔧 CONFIGURATION
+# 🔧 KONFIGURASI
 # ==========================
 logging.basicConfig(
     level=logging.INFO,
@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 class Config:
     """
-    Configuration class that fetches environment variables just-in-time
-    to avoid race conditions on startup.
+    Kelas konfigurasi yang mengambil variabel lingkungan secara just-in-time
+    untuk menghindari race condition saat startup.
     """
     @staticmethod
     def BOT_TOKEN(): return os.environ.get("BOT_TOKEN")
@@ -76,7 +76,7 @@ class BotLogic:
         self.bot = bot_instance
         
         if not Config.DATABASE_URL():
-            raise ValueError("DATABASE_URL is not set. Persistence will fail.")
+            raise ValueError("DATABASE_URL tidak diatur. Persistensi akan gagal.")
             
         self.groq_client = self._initialize_groq()
         self.responses = self._load_initial_responses()
@@ -91,17 +91,17 @@ class BotLogic:
         self.ALLOWED_DOMAINS = ['pump.fun', 't.me/NPEPEVERSE', 'x.com/NPEPE_Verse', 'base44.app']
         self._ensure_db_table_exists()
         self._register_handlers()
-        logger.info("BotLogic initialized successfully.")
+        logger.info("BotLogic berhasil diinisialisasi.")
 
     def _get_db_connection(self):
         db_url = Config.DATABASE_URL()
         if not db_url or not psycopg2:
-            logger.warning("DATABASE_URL not set or psycopg2 not installed. Persistence is disabled.")
+            logger.warning("DATABASE_URL tidak diatur atau psycopg2 tidak terinstal. Persistensi dinonaktifkan.")
             return None
         try:
             return psycopg2.connect(db_url)
         except Exception as e:
-            logger.error(f"DB connection failed: {e}")
+            logger.error(f"Koneksi DB gagal: {e}")
             return None
 
     def _ensure_db_table_exists(self):
@@ -111,9 +111,9 @@ class BotLogic:
                 with conn.cursor() as cursor:
                     cursor.execute("CREATE TABLE IF NOT EXISTS schedule_log (task_name TEXT PRIMARY KEY, last_run_date TEXT)")
                 conn.commit()
-                logger.info("Database table 'schedule_log' is ready.")
+                logger.info("Tabel database 'schedule_log' siap.")
             except Exception as e:
-                logger.error(f"Failed to create schedule table: {e}")
+                logger.error(f"Gagal membuat tabel jadwal: {e}")
             finally:
                 conn.close()
 
@@ -126,7 +126,7 @@ class BotLogic:
                 result = cursor.fetchone()
             return result[0] if result else None
         except Exception as e:
-            logger.error(f"Failed to get last run date from DB for {task_name}: {e}")
+            logger.error(f"Gagal mendapatkan tanggal terakhir dijalankan dari DB untuk {task_name}: {e}")
             return None
         finally:
             if conn: conn.close()
@@ -139,7 +139,7 @@ class BotLogic:
                 cursor.execute("INSERT INTO schedule_log (task_name, last_run_date) VALUES (%s, %s) ON CONFLICT (task_name) DO UPDATE SET last_run_date = EXCLUDED.last_run_date", (task_name, run_date))
             conn.commit()
         except Exception as e:
-            logger.error(f"Failed to update DB for {task_name}: {e}")
+            logger.error(f"Gagal memperbarui DB untuk {task_name}: {e}")
             try: conn.rollback()
             except: pass
         finally:
@@ -171,24 +171,24 @@ class BotLogic:
                     should_run = True
             if should_run:
                 try:
-                    logger.info(f"Running scheduled task: {name} at {now_utc.isoformat()}")
+                    logger.info(f"Menjalankan tugas terjadwal: {name} pada {now_utc.isoformat()}")
                     schedule['task'](*schedule.get('args', ()))
                     run_marker = (now_utc.strftime('%Y-W%U') if is_weekly else today_utc_str)
                     self._update_last_run_date(name, run_marker)
                 except Exception as e:
-                    logger.error(f"Error running scheduled task {name}: {e}", exc_info=True)
+                    logger.error(f"Error menjalankan tugas terjadwal {name}: {e}", exc_info=True)
 
     def _initialize_groq(self):
         api_key = Config.GROQ_API_KEY()
         if not api_key or not groq or not httpx:
-            logger.warning("Groq not available or GROQ_API_KEY is missing. AI features disabled.")
+            logger.warning("Groq tidak tersedia atau GROQ_API_KEY hilang. Fitur AI dinonaktifkan.")
             return None
         try:
             client = groq.Groq(api_key=api_key, http_client=httpx.Client(timeout=15.0))
-            logger.info("Groq client initialized successfully.")
+            logger.info("Klien Groq berhasil diinisialisasi.")
             return client
         except Exception as e:
-            logger.error(f"Failed to initialize Groq client: {e}")
+            logger.error(f"Gagal menginisialisasi klien Groq: {e}")
             return None
 
     def _load_initial_responses(self):
@@ -201,7 +201,7 @@ class BotLogic:
             "NOON_GREETING": [ "🐸☀️ Midday check-in, NPEPEVERSE! Hope you're smashing it. Keep that afternoon energy high! LFG! 🔥", "Lunch time fuel-up! 🍔 Grab a bite, check the charts, and get ready for the afternoon pump. We're just getting warmed up! 🚀", "Just dropping by to say: stay based, stay hydrated, and stay diamond-handed. The best is yet to come! 💎🙌", "Hope you're having a legendary day, frens! The world is watching the NPEPEVERSE. Let's give them a show this afternoon! ✨", "The sun is high and so are our spirits! How's the NPEPE army feeling? Sound off! 🐸💚", "Quick break from conquering the crypto world. Remember to stretch those diamond hands. The second half of the day is ours! 💪", "Afternoon vibe check! ✅ Bullish. ✅ Based. ✅ Ready to send it. Let's finish the day strong, frens! 🚀" ],
             "NIGHT_GREETING": [ "🐸🌙 The charts never sleep, but legends need to rest. Good night, NPEPEVERSE! See you at the next ATH. 💤", "GN, frens! Dream big, HODL strong. Tomorrow we continue our journey. 🚀", "Rest up, diamond hands. You've earned it. The hype will be here when you wake up! 💎", "Hope you had a based and bullish day. Good night, NPEPE army! 💚", "The moon is watching over us, frens. Sleep well. Our mission resumes at dawn! 🌕", "Signing off for the night! Keep those bags packed, the rocket is always ready. GN! 🚀", "Another great day in the books. Good night, NPEPEVERSE! Let's do it all again tomorrow, but bigger! 🔥" ],
             "WISDOM": [ "The greatest gains are not in the chart, but in the strength of the community. WAGMI. 🐸💚", "Fear is temporary, HODLing is forever. Stay strong, fren.", "In a world of paper hands, be the diamond-handed rock. Your patience will be rewarded. 💎", "A red day is just a discount for the true believer. The NPEPEVERSE is built on conviction.", "They told you it was just a meme. They were right. And memes are the most powerful force on the internet. 🔥", "Look not at the price of today, but at the vision of tomorrow. We are building more than a token. 🚀", "The journey to the moon is a marathon, not a sprint. Conserve your energy, keep the faith. 🌕" ],
-            "HYPE": [ "Let's go, NPEPE army! Time to make some noise! 🚀", "Who's feeling bullish today?! 🔥", "NPEPEVERSE is unstoppable! 🐸💚", "Keep that energy high! We're just getting started! ✨", "Diamond hands, where you at?! 💎🙌", "This is more than a coin, it's a movement!", "To the moon and beyond! LFG! 🌕", "Hype train is leaving the station! All aboard! 🚂", "Feel the power of the meme! 💪", "We're writing history, one block at a time! 📜", "Don't just HODL, be proud! We are NPEPE! 🐸", "The vibes are immaculate today, frens!", "Let's paint that chart green! 💚", "Remember why you're here. For the glory! 🔥", "This community is the best in crypto, period.", "Let them doubt. We know what we hold. 💎", "Ready for the next leg up? I know I am! 🚀", "Stay hyped, stay based!", "Every buy, every meme, every post matters! Keep it up! 💪", "NPEPE is the future of memes! 🐸", "Can you feel it? That's the feeling of inevitability.", "Let's show them what a real community looks like! 💚", "The pump is programmed. Stay tuned. 📈", "Who's ready to shock the world? ✨", "HODL the line, frens! Victory is near! ⚔️", "This is the one. You know it, I know it. 🐸", "Keep spreading the word. NPEPE is taking over!", "The bigger the base, the higher in space! 🚀", "Let's get it! No sleep 'til the moon! 🌕", "This is legendary. You are legendary. We are legendary.", "Don't let anyone shake you out. Diamond hands win. 💎", "The energy in here is electric! 🔥", "We are the new standard. The NPEPE standard.", "History has its eyes on us. Let's give them a show! 🐸🎬", "Let's make our ancestors proud. Buy more NPEPE. 😂🚀", "We're not just riding the wave, we ARE the wave! 🌊", "UNSTOPPABLE FORCE!", "This army is legendary.", "Generational wealth is minted here.", "My ribbits are tingling... something is coming.", "Keep shilling, keep winning.", "Inject it into my veins! 💉", "The market can try, but it can't stop this. 💪", "This is financial advice. (not financial advice)", "Every dip is a gift. 🎁", "WAGMI is not a meme, it's a promise.", "Building the future, one green candle at a time.", "They ain't seen nothing yet.", "Chart looking tastier than a midnight snack. 😋", "Load up your bags, frens. The rocket is boarding.", "This is pure, uncut hopium. And I love it.", "Feel that? The ground is shaking. 🐸", "We're not just going to the moon, we're building a colony there. 🌕🏡", "The sleeper has awakened.", "In a world of dogs and cats, be a frog. 🐸", "Let the FOMO begin. They'll wish they bought here.", "This is what peak performance looks like.", "Stay calm and HODL on. Panicking is for paper hands.", "The meme economy is strong with this one.", "This is the way.", "NPEPEVERSE > Multiverse.", "They called us a meme. We're becoming a religion. 🙏", "Screaming, crying, throwing up. (in a good way)", "This is the people's coin.", "The community is our utility. And it's priceless.", "Just up.", "I smell a new all-time high coming soon. 👃", "Let your diamond hands shine bright today. ✨", "Some people chase pumps. We ARE the pump.", "This is the beginning of our villain arc. 😈", "Don't tell your girlfriend, tell the world! 🗣️", "Absolutely based.", "We are so back.", "Never been so bullish in my life.", "This is the alpha. You are the alpha.", "The strength in here is unreal. 💚", "Keep the faith. The plan is working.", "It's NPEPE season, frens.", "The prophecy is being fulfilled.", "I've seen the future, and it's very, very green." ],
+            "HYPE": [ "Let's go, NPEPE army! Time to make some noise! 🚀", "Who's feeling bullish today?! 🔥", "NPEPEVERSE is unstoppable! 🐸💚", "Keep that energy high! We're just getting started! ✨", "Diamond hands, where you at?! 💎🙌", "This is more than a coin, it's a movement!", "To the moon and beyond! LFG! 🌕", "Hype train is leaving the station! All aboard! 🚂", "Feel the power of the meme! 💪", "We're writing history, one block at a time! 📜", "Don't just HODL, be proud! We are NPEPE! 🐸", "The vibes are immaculate today, frens!", "Let's paint that chart green! 💚", "Remember why you're here. For the glory! 🔥", "This community is the best in crypto, period.", "Let them doubt. We know what we hold. 💎", "Ready for the next leg up? I know I am! 🚀", "Stay hyped, stay based!", "Every buy, every meme, every post matters! Keep it up! 💪", "NPEPE is the future of memes! 🐸", "Can you feel it? That's the feeling of inevitability.", "Let's show them what a real community looks like! 💚", "The pump is programmed. Stay tuned. 📈", "Who's ready to shock the world? ✨", "HODL the line, frens! Victory is near! ⚔️", "This is the one. You know it, I know it. 🐸", "Keep spreading the word. NPEPE is taking over!", "The bigger the base, the higher in space! 🚀", "Let's get it! No sleep 'til the moon! 🌕", "This is legendary. You are legendary. We are legendary.", "Don't let anyone shake you out. Diamond hands win. 💎", "The energy in here is electric! 🔥", "We are the new standard. The NPEPE standard.", "History has its eyes on us. Let's give them a show! 🐸🎬", "Let's make our ancestors proud. Buy more NPEPE. 😂🚀", "We're not just riding the wave, we ARE the wave! 🌊" ],
             "COLLABORATION_RESPONSE": [ "WAGMI! Love the energy! The best collab is a strong community. Be loud in here, raid on X, and let's make the NPEPEVERSE impossible to ignore! 🚀", "Thanks, fren! We don't do paid promos, we ARE the promo! Your hype is the best marketing. Light up X with $NPEPE memes and be a legend in this chat! 🔥", "You want to help? Based! The NPEPE army runs on passion. Be active, welcome new frens, and spread the gospel of NPEPE across the internet like a religion! 🐸🙏", "Glad to have you on board! The most valuable thing you can do is bring your energy here every day and make some noise on X. Let's build this together! 💚", "That's the spirit! To grow, we need soldiers. Your mission: engage with our posts on X, create memes, and keep the vibe in this Telegram electric! ⚡️", "Thanks for the offer, legend! Our marketing plan is YOU. Be the hype you want to see in the world. Let's get $NPEPE trending! 📈", "Let's do it! Your role is Chief Hype Officer. Your KPIs are memes posted and raids joined. Welcome to the team! 😎", "Awesome! We need more frens like you. Let's make this the most active, legendary community in crypto. Start by telling a fren about $NPEPE today! 🗣️" ],
         }
     
