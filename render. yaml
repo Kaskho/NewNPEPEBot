@@ -5,7 +5,3 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python3 main.py
     plan: free
-    disks:
-      - name: schedule-storage
-        mountPath: /data
-        sizeGB: 1
