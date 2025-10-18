@@ -7,18 +7,23 @@ import re
 from datetime import datetime, timezone
 import threading
 
-# Pustaka opsional untuk fleksibilitas
+# --- LOGGING DIAGNOSTIK BARU ---
+# Kita coba impor pustaka dan langsung catat hasilnya
+try:
+    import psycopg2
+    # Jika berhasil, kita catat pesan sukses
+    logging.info("DIAGNOSTIK (bot_logic.py): Pustaka 'psycopg2' BERHASIL diimpor.")
+except ImportError as e:
+    # Jika gagal, kita catat pesan error kritis
+    psycopg2 = None
+    logging.critical(f"DIAGNOSTIK (bot_logic.py): KRITIS - GAGAL mengimpor 'psycopg2'. Persistensi akan dinonaktifkan. Error: {e}")
+
 try:
     import groq
     import httpx
 except ImportError:
     groq = None
     httpx = None
-
-try:
-    import psycopg2
-except ImportError:
-    psycopg2 = None
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -33,10 +38,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class Config:
-    """
-    Kelas konfigurasi yang mengambil variabel lingkungan secara just-in-time
-    untuk menghindari race condition saat startup.
-    """
     @staticmethod
     def BOT_TOKEN(): return os.environ.get("BOT_TOKEN")
     
@@ -75,8 +76,11 @@ class BotLogic:
     def __init__(self, bot_instance: telebot.TeleBot):
         self.bot = bot_instance
         
+        # Pemeriksaan eksplisit di sini
         if not Config.DATABASE_URL():
-            raise ValueError("DATABASE_URL tidak diatur. Persistensi akan gagal.")
+            logger.critical("FATAL (BotLogic init): DATABASE_URL tidak ditemukan saat inisialisasi. Persistensi tidak akan berfungsi.")
+        if not psycopg2:
+            logger.critical("FATAL (BotLogic init): Pustaka psycopg2 tidak tersedia. Persistensi tidak akan berfungsi.")
             
         self.groq_client = self._initialize_groq()
         self.responses = self._load_initial_responses()
@@ -96,6 +100,7 @@ class BotLogic:
     def _get_db_connection(self):
         db_url = Config.DATABASE_URL()
         if not db_url or not psycopg2:
+            # Pesan peringatan yang sama seperti yang Anda lihat sebelumnya, tapi sekarang kita tahu penyebabnya dari log diagnostik
             logger.warning("DATABASE_URL tidak diatur atau psycopg2 tidak terinstal. Persistensi dinonaktifkan.")
             return None
         try:
