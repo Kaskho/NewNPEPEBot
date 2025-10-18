@@ -14,6 +14,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# --- LOGGING DIAGNOSTIK BARU ---
+db_url_value = os.environ.get("DATABASE_URL")
+logger.info(f"DIAGNOSTIK (main.py): Memeriksa DATABASE_URL saat startup. Ditemukan: {'Ya' if db_url_value else 'Tidak'}")
+# --- AKHIR LOGGING DIAGNOSTIK ---
+
 app = Flask(__name__)
 
 bot = None
