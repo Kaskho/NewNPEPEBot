@@ -3,7 +3,8 @@ import logging
 import time
 from flask import Flask, request, abort
 import telebot
-from bot_logic import BotLogic, Config
+from bot_logic import BotLogic
+from config import Config
 from waitress import serve
 
 # ==========================
@@ -15,26 +16,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- BLOK DIAGNOSTIK SEMENTARA ---
-# Kode ini akan berjalan saat bot dimulai untuk memeriksa env var.
-logger.info("="*40)
-logger.info("MEMERIKSA SEMUA ENVIRONMENT VARIABLES YANG TERLIHAT")
-db_url_from_os = os.environ.get("DATABASE_URL")
-bot_token_from_os = os.environ.get("BOT_TOKEN")
-webhook_from_os = os.environ.get("WEBHOOK_BASE_URL")
-
-logger.info(f"NILAI 'DATABASE_URL' DARI os.environ: {db_url_from_os}")
-logger.info(f"NILAI 'BOT_TOKEN' DARI os.environ: {'Ditemukan' if bot_token_from_os else 'Tidak Ditemukan'}")
-logger.info(f"NILAI 'WEBHOOK_BASE_URL' DARI os.environ: {webhook_from_os}")
-logger.info("="*40)
-# --- AKHIR BLOK DIAGNOSTIK ---
-
 # Inisialisasi aplikasi Flask
 app = Flask(__name__)
 bot = None
 bot_logic = None
 
-if not all([bot_token_from_os, webhook_from_os, db_url_from_os]):
+# Pemeriksaan awal untuk variabel penting.
+if not all(os.environ.get(key) for key in ["BOT_TOKEN", "WEBHOOK_BASE_URL", "DATABASE_URL"]):
     logger.critical("FATAL: Satu atau lebih variabel lingkungan penting (BOT_TOKEN, WEBHOOK_BASE_URL, DATABASE_URL) tidak ditemukan.")
 else:
     try:
