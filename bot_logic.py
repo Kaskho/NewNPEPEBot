@@ -7,22 +7,49 @@ import re
 from datetime import datetime, timezone
 import threading
 
+# Perubahan: Impor Config dari file terpisah
+from config import Config
+
 try:
     import psycopg2
-except ImportError:
+    logging.info("DIAGNOSTIK (bot_logic.py): Pustaka 'psycopg2' BERHASIL diimpor.")
+except ImportError as e:
     psycopg2 = None
+    logging.critical(f"DIAGNOSTIK (bot_logic.py): KRITIS - GAGAL mengimpor 'psycopg2'. Persistensi akan dinonaktifkan. Error: {e}")
+
+try:
+    import groq
+    import httpx
+except ImportError:
+    groq = None
+    httpx = None
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import groq
-import httpx
 
+# ==========================
+#  🔧  KONFIGURASI
+# ==========================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
+# KELAS CONFIG TELAH DIHAPUS DARI SINI DAN PINDAH KE config.py
+
 class BotLogic:
-    def __init__(self, bot_instance: telebot.TeleBot, env_vars: dict):
+    """
+    Kelas utama yang menampung semua logika dan state dari bot.
+    """
+    def __init__(self, bot_instance: telebot.TeleBot):
         self.bot = bot_instance
-        self.env = env_vars # <-- Menyimpan semua env vars
+        
+        if not Config.DATABASE_URL():
+            logger.critical("FATAL (BotLogic init): DATABASE_URL tidak ditemukan. Persistensi tidak akan berfungsi.")
+        if not psycopg2:
+            logger.critical("FATAL (BotLogic init): Pustaka psycopg2 tidak tersedia. Persistensi tidak akan berfungsi.")
         
         self.groq_client = self._initialize_groq()
         self.responses = self._load_initial_responses()
