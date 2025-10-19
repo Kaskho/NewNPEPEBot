@@ -7,81 +7,23 @@ import re
 from datetime import datetime, timezone
 import threading
 
-# --- LOGGING DIAGNOSTIK BARU ---
-# Kita coba impor pustaka dan langsung catat hasilnya
 try:
     import psycopg2
-    # Jika berhasil, kita catat pesan sukses
-    logging.info("DIAGNOSTIK (bot_logic.py): Pustaka 'psycopg2' BERHASIL diimpor.")
-except ImportError as e:
-    # Jika gagal, kita catat pesan error kritis
-    psycopg2 = None
-    logging.critical(f"DIAGNOSTIK (bot_logic.py): KRITIS - GAGAL mengimpor 'psycopg2'. Persistensi akan dinonaktifkan. Error: {e}")
-
-try:
-    import groq
-    import httpx
 except ImportError:
-    groq = None
-    httpx = None
+    psycopg2 = None
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import groq
+import httpx
 
-# ==========================
-# 🔧 KONFIGURASI
-# ==========================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
-class Config:
-    @staticmethod
-    def BOT_TOKEN(): return os.environ.get("BOT_TOKEN")
-    
-    @staticmethod
-    def WEBHOOK_BASE_URL(): return os.environ.get("WEBHOOK_BASE_URL")
-
-    @staticmethod
-    def GROQ_API_KEY(): return os.environ.get("GROQ_API_KEY")
-
-    @staticmethod
-    def GROUP_CHAT_ID(): return os.environ.get("GROUP_CHAT_ID")
-
-    @staticmethod
-    def GROUP_OWNER_ID(): return os.environ.get("GROUP_OWNER_ID")
-
-    @staticmethod
-    def DATABASE_URL(): return os.environ.get("DATABASE_URL")
-
-    @staticmethod
-    def CONTRACT_ADDRESS(): return os.environ.get("CONTRACT_ADDRESS", "BJ65ym9UYPkcfLSUuE9j4uXYuiG6TgA4pFn393Eppump")
-    
-    @staticmethod
-    def PUMP_FUN_LINK(): return f"https://pump.fun/{Config.CONTRACT_ADDRESS()}"
-
-    @staticmethod
-    def WEBSITE_URL(): return os.environ.get("WEBSITE_URL", "https://next-npepe-launchpad-2b8b3071.base44.app")
-    
-    @staticmethod
-    def TELEGRAM_URL(): return os.environ.get("TELEGRAM_URL", "https://t.me/NPEPEVERSE")
-
-    @staticmethod
-    def TWITTER_URL(): return os.environ.get("TWITTER_URL", "https://x.com/NPEPE_Verse")
-
-
 class BotLogic:
-    def __init__(self, bot_instance: telebot.TeleBot):
+    def __init__(self, bot_instance: telebot.TeleBot, env_vars: dict):
         self.bot = bot_instance
+        self.env = env_vars # <-- Menyimpan semua env vars
         
-        # Pemeriksaan eksplisit di sini
-        if not Config.DATABASE_URL():
-            logger.critical("FATAL (BotLogic init): DATABASE_URL tidak ditemukan saat inisialisasi. Persistensi tidak akan berfungsi.")
-        if not psycopg2:
-            logger.critical("FATAL (BotLogic init): Pustaka psycopg2 tidak tersedia. Persistensi tidak akan berfungsi.")
-            
         self.groq_client = self._initialize_groq()
         self.responses = self._load_initial_responses()
         self.admin_ids = set()
@@ -90,18 +32,20 @@ class BotLogic:
         self.COOLDOWN_SECONDS = 90
         self.BASE_REPLY_CHANCE = 0.20
         self.HYPE_REPLY_CHANCE = 0.75
+        
+        # Menggunakan self.env untuk mengakses variabel
         self.HYPE_KEYWORDS = ['buy', 'bought', 'pump', 'moon', 'lfg', 'send it', 'green', 'bullish', 'rocket', 'diamond', 'hodl', 'ape', 'lets go', 'ath']
         self.FORBIDDEN_KEYWORDS = ['airdrop', 'giveaway', 'presale', 'private sale', 'whitelist', 'signal', 'pump group', 'trading signal', 'investment advice', 'other project']
-        self.ALLOWED_DOMAINS = ['pump.fun', 't.me/NPEPEVERSE', 'x.com/NPEPE_Verse', 'base44.app']
+        self.ALLOWED_DOMAINS = ['pump.fun', self.env.get("TELEGRAM_URL", "").split("/")[-1], self.env.get("TWITTER_URL", "").split("/")[-1], 'base44.app']
+        
         self._ensure_db_table_exists()
         self._register_handlers()
         logger.info("BotLogic berhasil diinisialisasi.")
 
     def _get_db_connection(self):
-        db_url = Config.DATABASE_URL()
+        db_url = self.env.get("DATABASE_URL")
         if not db_url or not psycopg2:
-            # Pesan peringatan yang sama seperti yang Anda lihat sebelumnya, tapi sekarang kita tahu penyebabnya dari log diagnostik
-            logger.warning("DATABASE_URL tidak diatur atau psycopg2 tidak terinstal. Persistensi dinonaktifkan.")
+            logger.warning("DATABASE_URL tidak diatur atau psycopg2 tidak terinstal.")
             return None
         try:
             return psycopg2.connect(db_url)
@@ -109,6 +53,8 @@ class BotLogic:
             logger.error(f"Koneksi DB gagal: {e}")
             return None
 
+    # ... Sisa file persis sama dengan versi sebelumnya ...
+    # ... Kode lengkapnya disertakan di bawah ini untuk kepastian ...
     def _ensure_db_table_exists(self):
         conn = self._get_db_connection()
         if conn:
@@ -131,7 +77,7 @@ class BotLogic:
                 result = cursor.fetchone()
             return result[0] if result else None
         except Exception as e:
-            logger.error(f"Gagal mendapatkan tanggal terakhir dijalankan dari DB untuk {task_name}: {e}")
+            logger.error(f"Gagal mendapatkan tanggal terakhir dijalankan untuk {task_name}: {e}")
             return None
         finally:
             if conn: conn.close()
@@ -184,7 +130,7 @@ class BotLogic:
                     logger.error(f"Error menjalankan tugas terjadwal {name}: {e}", exc_info=True)
 
     def _initialize_groq(self):
-        api_key = Config.GROQ_API_KEY()
+        api_key = self.env.get("GROQ_API_KEY")
         if not api_key or not groq or not httpx:
             logger.warning("Groq tidak tersedia atau GROQ_API_KEY hilang. Fitur AI dinonaktifkan.")
             return None
@@ -220,8 +166,8 @@ class BotLogic:
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🚀 About $NPEPE", callback_data="about"), InlineKeyboardButton("🔗 Contract Address", callback_data="ca"),
-            InlineKeyboardButton("💰 Buy on Pump.fun", url=Config.PUMP_FUN_LINK()), InlineKeyboardButton("🌐 Website", url=Config.WEBSITE_URL()),
-            InlineKeyboardButton("✈️ Telegram", url=Config.TELEGRAM_URL()), InlineKeyboardButton("🐦 Twitter", url=Config.TWITTER_URL()),
+            InlineKeyboardButton("💰 Buy on Pump.fun", url=self.env.get("PUMP_FUN_LINK")), InlineKeyboardButton("🌐 Website", url=self.env.get("WEBSITE_URL")),
+            InlineKeyboardButton("✈️ Telegram", url=self.env.get("TELEGRAM_URL")), InlineKeyboardButton("🐦 Twitter", url=self.env.get("TWITTER_URL")),
             InlineKeyboardButton("🐸 Hype Me Up!", callback_data="hype")
         )
         return keyboard
@@ -247,7 +193,7 @@ class BotLogic:
                 if not any(domain in url for domain in self.ALLOWED_DOMAINS): return True, f"Unauthorized Link: {url}"
         solana_pattern = r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b'
         eth_pattern = r'\b0x[a-fA-F0-9]{40}\b'
-        if re.search(solana_pattern, text) and Config.CONTRACT_ADDRESS() not in text: return True, "Potential Solana Contract Address"
+        if re.search(solana_pattern, text) and self.env.get("CONTRACT_ADDRESS") not in text: return True, "Potential Solana Contract Address"
         if re.search(eth_pattern, text): return True, "Potential EVM Contract Address"
         return False, None
 
@@ -277,7 +223,7 @@ class BotLogic:
                 self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=about_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
             elif call.data == "ca":
                 self.bot.answer_callback_query(call.id)
-                ca_text = f"🔗 *Contract Address:*\n`{Config.CONTRACT_ADDRESS()}`"
+                ca_text = f"🔗 *Contract Address:*\n`{self.env.get('CONTRACT_ADDRESS')}`"
                 self.bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=ca_text, reply_markup=self.main_menu_keyboard(), parse_mode="Markdown")
             else:
                 self.bot.answer_callback_query(call.id, text="Action not recognized.")
@@ -301,7 +247,7 @@ class BotLogic:
                 user_id = message.from_user.id
                 self._update_admin_ids(chat_id)
                 is_exempt = user_id in self.admin_ids
-                if Config.GROUP_OWNER_ID() and str(user_id) == str(Config.GROUP_OWNER_ID()): is_exempt = True
+                if self.env.get("GROUP_OWNER_ID") and str(user_id) == str(self.env.get("GROUP_OWNER_ID")): is_exempt = True
                 if not is_exempt:
                     is_spam, reason = self._is_spam_or_ad(message)
                     if is_spam:
@@ -317,15 +263,15 @@ class BotLogic:
             lower_text = text.lower().strip()
             chat_id = message.chat.id
 
-            if (Config.GROUP_OWNER_ID() and message.entities and message.chat.type in ['group', 'supergroup']):
+            if (self.env.get("GROUP_OWNER_ID") and message.entities and message.chat.type in ['group', 'supergroup']):
                 for entity in message.entities:
                     if getattr(entity, 'type', None) == 'text_mention' and getattr(entity, 'user', None):
-                        if str(entity.user.id) == str(Config.GROUP_OWNER_ID()):
+                        if str(entity.user.id) == str(self.env.get("GROUP_OWNER_ID")):
                             self.bot.send_message(chat_id, random.choice(self.responses.get("WHO_IS_OWNER", [])))
                             return
             
             if any(kw in lower_text for kw in ["ca", "contract", "address"]):
-                self.bot.send_message(chat_id, f"Here is the contract address, fren:\n\n`{Config.CONTRACT_ADDRESS()}`", parse_mode="Markdown")
+                self.bot.send_message(chat_id, f"Here is the contract address, fren:\n\n`{self.env.get('CONTRACT_ADDRESS')}`", parse_mode="Markdown")
                 return
             if any(kw in lower_text for kw in ["how to buy", "where to buy", "buy npepe"]):
                 self.bot.send_message(chat_id, "💰 You can buy *$NPEPE* on Pump.fun! The portal to the moon is one click away! 🚀", parse_mode="Markdown", reply_markup=self.main_menu_keyboard())
@@ -372,7 +318,7 @@ class BotLogic:
             logger.error(f"FATAL ERROR processing message: {e}", exc_info=True)
 
     def send_scheduled_greeting(self, time_of_day):
-        group_id = Config.GROUP_CHAT_ID()
+        group_id = self.env.get("GROUP_CHAT_ID")
         if not group_id: return
         greetings = { 'morning': self.responses.get("MORNING_GREETING", []), 'noon': self.responses.get("NOON_GREETING", []), 'night': self.responses.get("NIGHT_GREETING", []), 'random': self.responses.get("HYPE", []) }
         message_list = greetings.get(time_of_day, ["Keep the hype alive!"])
@@ -384,7 +330,7 @@ class BotLogic:
             except Exception as e: logger.error(f"Failed to send {time_of_day} greeting: {e}", exc_info=True)
 
     def send_scheduled_wisdom(self):
-        group_id = Config.GROUP_CHAT_ID()
+        group_id = self.env.get("GROUP_CHAT_ID")
         if not group_id: return
         wisdom_list = self.responses.get("WISDOM", [])
         if wisdom_list:
