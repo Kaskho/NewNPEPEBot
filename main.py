@@ -3,45 +3,47 @@ import logging
 import time
 from flask import Flask, request, abort
 import telebot
-from bot_logic import BotLogic, Config
 from waitress import serve
 
 # ==========================
-# 🔧 KONFIGURASI & INISIALISASI
+# 🔧 BACA SEMUA KUNCI DI AWAL
 # ==========================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Ini adalah perubahan paling penting. Kita membaca semua kunci sekarang.
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+WEBHOOK_BASE_URL = os.environ.get("WEBHOOK_BASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+# Pastikan kunci-kunci lain juga dibaca jika diperlukan di sini.
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- LOGGING DIAGNOSTIK BARU ---
-db_url_value = os.environ.get("DATABASE_URL")
-logger.info(f"DIAGNOSTIK (main.py): Memeriksa DATABASE_URL saat startup. Ditemukan: {'Ya' if db_url_value else 'Tidak'}")
-# --- AKHIR LOGGING DIAGNOSTIK ---
+# Impor bot_logic SETELAH logging dikonfigurasi
+from bot_logic import BotLogic
 
 app = Flask(__name__)
-
 bot = None
 bot_logic = None
 
-# Pemeriksaan awal untuk variabel penting.
-if not all(os.environ.get(key) for key in ["BOT_TOKEN", "WEBHOOK_BASE_URL", "DATABASE_URL"]):
-    logger.critical("FATAL: Satu atau lebih variabel lingkungan penting (BOT_TOKEN, WEBHOOK_BASE_URL, DATABASE_URL) tidak ditemukan.")
-else:
+# ==========================
+# 🚀 INISIALISASI BOT
+# ==========================
+# Verifikasi bahwa semua kunci penting ada SEBELUM mencoba memulai bot.
+if all([BOT_TOKEN, WEBHOOK_BASE_URL, DATABASE_URL]):
     try:
-        bot = telebot.TeleBot(Config.BOT_TOKEN(), threaded=False)
-        bot_logic = BotLogic(bot)
+        bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+        # Berikan semua variabel yang sudah dibaca ke BotLogic
+        bot_logic = BotLogic(bot, os.environ)
     except Exception as e:
         logger.critical(f"Terjadi error saat inisialisasi bot: {e}", exc_info=True)
+else:
+    logger.critical("FATAL: Satu atau lebih variabel lingkungan penting (BOT_TOKEN, WEBHOOK_BASE_URL, DATABASE_URL) tidak ditemukan.")
 
 # ==========================
 # 🌐 RUTE WEB FLASK
 # ==========================
-@app.route('/<token>', methods=['POST'])
-def webhook(token):
-    # Verifikasi token untuk keamanan dasar
-    if token == Config.BOT_TOKEN() and bot_logic and request.headers.get('content-type') == 'application/json':
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    if bot_logic and request.headers.get('content-type') == 'application/json':
         try:
             bot_logic.check_and_run_schedules()
             json_string = request.get_data().decode('utf-8')
@@ -51,7 +53,6 @@ def webhook(token):
             logger.error(f"Terjadi pengecualian yang tidak ditangani di webhook: {e}", exc_info=True)
         return "OK", 200
     else:
-        # Jika token salah atau bot tidak siap, tolak permintaan
         abort(403)
 
 @app.route('/health', methods=['GET'])
@@ -70,16 +71,15 @@ def index():
 # ==========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-
     if bot and bot_logic:
-        webhook_url = f"{Config.WEBHOOK_BASE_URL()}/{Config.BOT_TOKEN()}"
+        webhook_url = f"{WEBHOOK_BASE_URL}/{BOT_TOKEN}"
         logger.info("Memulai bot dan mengatur webhook...")
         try:
             bot.remove_webhook()
             time.sleep(0.5)
             success = bot.set_webhook(url=webhook_url)
             if success:
-                logger.info("✅ Webhook berhasil diatur ke endpoint token bot.")
+                logger.info("✅ Webhook berhasil diatur.")
             else:
                 logger.error("❌ Gagal mengatur webhook.")
         except Exception as e:
@@ -88,8 +88,7 @@ if __name__ == "__main__":
         serve(app, host="0.0.0.0", port=port)
     else:
         logger.error("Bot tidak diinisialisasi. Berjalan dalam mode server terdegradasi.")
-        # Server fallback untuk mencegah Render crash saat boot jika ada masalah konfigurasi
         @app.route('/')
         def error_page():
-            return "Konfigurasi bot tidak lengkap. Periksa variabel lingkungan.", 500
+            return "Konfigurasi bot tidak lengkap.", 500
         serve(app, host="0.0.0.0", port=port)
