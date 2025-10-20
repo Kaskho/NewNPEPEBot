@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: npepebot
-    env: python
-    # Menentukan versi Python yang stabil untuk menghindari error
-    pythonVersion: "3.11"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 main.py
-    plan: free
