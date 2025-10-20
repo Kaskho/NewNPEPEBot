@@ -3,10 +3,51 @@ import logging
 import time
 from flask import Flask, request, abort
 import telebot
-from bot_logic import BotLogic
-from config import Config
 from waitress import serve
+from config import Config
+from bot_logic import BotLogic
 
+# === BLOK DIAGNOSTIK BARU ===
+# Kode ini akan berjalan pertama kali untuk memeriksa semua variabel lingkungan.
+print("="*40)
+print("MEMULAI PEMERIKSAAN PAKSA VARIABEL LINGKUNGAN...")
+print("="*40)
+
+required_vars = [
+    "BOT_TOKEN",
+    "WEBHOOK_BASE_URL",
+    "DATABASE_URL",
+    "GROQ_API_KEY",
+    "GROUP_CHAT_ID",
+    "GROUP_OWNER_ID"
+]
+
+missing_vars = []
+for var in required_vars:
+    value = os.environ.get(var)
+    if not value:
+        print(f"HASIL: Variabel '{var}' -> TIDAK DITEMUKAN!")
+        missing_vars.append(var)
+    else:
+        print(f"HASIL: Variabel '{var}' -> Ditemukan.")
+
+if missing_vars:
+    print("="*40)
+    print(f"FATAL ERROR: Variabel lingkungan berikut hilang: {', '.join(missing_vars)}")
+    print("Bot tidak bisa dimulai. Silakan periksa tab 'Environment' di dasbor Render Anda.")
+    print("="*40)
+    # Sengaja menghentikan program dengan error yang jelas
+    raise ValueError(f"Variabel lingkungan penting hilang: {', '.join(missing_vars)}")
+
+print("="*40)
+print("PEMERIKSAAN SELESAI: Semua variabel lingkungan penting ditemukan.")
+print("="*40)
+# === AKHIR BLOK DIAGNOSTIK ===
+
+
+# ==========================
+#  🔧  KONFIGURASI & INISIALISASI
+# ==========================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -17,47 +58,44 @@ app = Flask(__name__)
 bot = None
 bot_logic = None
 
-# Inisialisasi Bot
 try:
-    if all([Config.BOT_TOKEN(), Config.WEBHOOK_BASE_URL(), Config.DATABASE_URL()]):
-        bot = telebot.TeleBot(Config.BOT_TOKEN(), threaded=False)
-        bot_logic = BotLogic(bot)
-    else:
-        logger.critical("FATAL: Variabel lingkungan penting tidak ditemukan.")
+    bot = telebot.TeleBot(Config.BOT_TOKEN(), threaded=False)
+    bot_logic = BotLogic(bot)
 except Exception as e:
     logger.critical(f"Terjadi error saat inisialisasi bot: {e}", exc_info=True)
+    raise e
 
-
-# Webhook untuk Telegram
-@app.route(f'/{Config.BOT_TOKEN()}', methods=['POST'])
-def webhook():
-    if bot_logic and request.headers.get('content-type') == 'application/json':
+# ==========================
+#  🌐  RUTE WEB FLASK
+# ==========================
+@app.route('/<token>', methods=['POST'])
+def webhook(token):
+    if token == Config.BOT_TOKEN() and bot_logic and request.headers.get('content-type') == 'application/json':
         try:
             bot_logic.check_and_run_schedules()
             json_string = request.get_data().decode('utf-8')
             update = telebot.types.Update.de_json(json_string)
             bot.process_new_updates([update])
         except Exception as e:
-            logger.error(f"Pengecualian di webhook: {e}", exc_info=True)
+            logger.error(f"Terjadi pengecualian yang tidak ditangani di webhook: {e}", exc_info=True)
         return "OK", 200
     else:
         abort(403)
 
-# Endpoint Health Check yang baru dan sangat kecil
 @app.route('/health', methods=['GET'])
 def health_check():
-    logger.info("Ping 'Health Check' diterima.")
     if bot_logic:
         bot_logic.check_and_run_schedules()
-    # Mengembalikan respons "204 No Content", yang benar-benar kosong.
-    return "", 204
+    # Mengembalikan respons kosong dengan status 204 (No Content)
+    return ('', 204)
 
-# Halaman utama
-@app.route('/')
+@app.route('/', methods=['GET'])
 def index():
     return "🐸 Bot Telegram NPEPE hidup — webhook diaktifkan.", 200
 
-# Fungsi untuk menjalankan server
+# ==========================
+#  🚀  TITIK MASUK UTAMA
+# ==========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     if bot and bot_logic:
